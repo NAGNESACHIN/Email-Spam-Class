@@ -106,7 +106,7 @@ def explain_prediction(text):
         return out
     except Exception: return []
 
-def classify(text):
+def classify(text, user_id=None, db=None):
     if not model: raise HTTPException(503, "Model not found. Run: python ml/train.py")
     prediction=model.predict([text])[0]
     probs=model.predict_proba([text])[0]
@@ -122,8 +122,8 @@ def classify(text):
             "risk_level":"high" if risk_score>=75 else "medium" if risk_score>=40 else "low",
             "risk_score":risk_score,"risk_signals":signals,"url_analysis":urls,
             "explanation":explain_prediction(text)}
-    history.append({"timestamp":datetime.now(timezone.utc).isoformat(),"prediction":result["prediction"],"risk_level":result["risk_level"],"risk_score":result["risk_score"],"spam_probability":result["spam_probability"],"preview":text[:90].replace("\n"," ")})
-    if len(history)>200: del history[:-200]
+    if user_id and db:
+        db.add(Scan(user_id=user_id,prediction=result["prediction"],risk_level=result["risk_level"],risk_score=result["risk_score"],spam_probability=result["spam_probability"],preview=text[:90].replace("\n"," "))); db.commit()
     return result
 
 def parse_email(raw):
@@ -170,12 +170,11 @@ def analyze_url_endpoint(request: URLRequest):
     return analyze_url(request.url)
 
 @app.get("/analytics")
-def analytics():
-    total=len(history)
-    spam=sum(1 for x in history if x["prediction"]=="spam")
-    high=sum(1 for x in history if x["risk_level"]=="high")
-    medium=sum(1 for x in history if x["risk_level"]=="medium")
-    return {"total_scanned":total,"spam_detected":spam,"ham_detected":total-spam,"spam_rate":round(spam/total*100,2) if total else 0,"high_risk":high,"medium_risk":medium,"recent":history[-20:][::-1]}
+def analytics(user: User=Depends(current_user), db=Depends(get_db)):
+    scans=db.query(Scan).filter(Scan.user_id==user.id).order_by(Scan.id.desc()).all()
+    total=len(scans); spam=sum(x.prediction=="spam" for x in scans)
+    recent=[{"timestamp":x.timestamp.isoformat(),"prediction":x.prediction,"risk_level":x.risk_level,"risk_score":x.risk_score,"spam_probability":x.spam_probability,"preview":x.preview} for x in scans[:20]]
+    return {"total_scanned":total,"spam_detected":spam,"ham_detected":total-spam,"spam_rate":round(spam/total*100,2) if total else 0,"high_risk":sum(x.risk_level=="high" for x in scans),"medium_risk":sum(x.risk_level=="medium" for x in scans),"recent":recent}
 
 @app.get("/health")
 def health(): return {"status":"ok","model_loaded":model is not None}
@@ -191,18 +190,18 @@ def model_comparison():
 def model_info(): return {"model":"Logistic Regression","features":"Word + character TF-IDF n-grams","dataset":"UCI SMS Spam Collection","api_version":app.version,"status":"loaded" if model else "not trained"}
 
 @app.post("/predict")
-def predict(request: EmailRequest):
+def predict(request: EmailRequest,user: User=Depends(current_user),db=Depends(get_db)):
     if not request.text.strip(): raise HTTPException(400,"Email text cannot be empty.")
-    return classify(request.text)
+    return classify(request.text,user.id,db)
 
 @app.post("/predict/batch")
-def predict_batch(request: BatchRequest):
+def predict_batch(request: BatchRequest,user: User=Depends(current_user),db=Depends(get_db)):
     if not request.emails or len(request.emails)>500: raise HTTPException(400,"Provide between 1 and 500 emails.")
-    return {"count":len(request.emails),"results":[classify(x) for x in request.emails]}
+    return {"count":len(request.emails),"results":[classify(x,user.id,db) for x in request.emails]}
 
 @app.post("/analyze/raw-email")
-def analyze_raw_email(request: RawEmailRequest):
+def analyze_raw_email(request: RawEmailRequest,user: User=Depends(current_user),db=Depends(get_db)):
     if not request.raw_email.strip(): raise HTTPException(400,"Raw email cannot be empty.")
     parsed=parse_email(request.raw_email)
-    analysis=classify(parsed["body"] or request.raw_email)
+    analysis=classify(parsed["body"] or request.raw_email,user.id,db)
     return {"headers":{k:v for k,v in parsed.items() if k!="body"},"body_analysis":analysis}
