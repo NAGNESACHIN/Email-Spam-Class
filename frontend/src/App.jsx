@@ -37,6 +37,7 @@ export default function App() {
           <div className="meter"><span style={{width:`${result.risk_score}%`}}/></div>
           <div className="stats"><div><small>SPAM PROBABILITY</small><b>{result.spam_probability}%</b></div><div><small>CONFIDENCE</small><b>{result.confidence}%</b></div><div><small>URLS FOUND</small><b>{result.url_analysis?.url_count??0}</b></div></div>
           <div className="signals"><h3>Risk signals</h3>{result.risk_signals.length?result.risk_signals.map((s,i)=><div className="signal" key={i}><span>!</span>{s}</div>):<div className="signal safe-signal"><span>✓</span>No obvious risk signals detected.</div>}</div>
+          {result.explanation?.length>0&&<div className="signals explanation"><h3>Why the model decided this</h3><div className="evidence">{result.explanation.map((x,i)=><div className="evidence-item" key={i}><span>{x.impact>=0?"+":"−"}</span><b>{x.term}</b><small>{x.impact>=0?"pushes toward spam":"pushes away from spam"}</small></div>)}</div></div>}
           {result.url_analysis?.suspicious_urls?.length>0&&<div className="signals urls"><h3>Suspicious URLs</h3>{result.url_analysis.suspicious_urls.map((u,i)=><div className="signal" key={i}><span>↗</span><div><b>{u.url}</b><small>{u.reasons.join(" · ")}</small></div></div>)}</div>}
         </>}
       </div>
