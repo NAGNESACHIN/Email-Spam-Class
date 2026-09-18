@@ -8,9 +8,9 @@ import json
 from datetime import datetime, timezone
 from fastapi.responses import JSONResponse
 import joblib
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,23 +22,32 @@ async def unhandled_exception_handler(request, exc):
     return JSONResponse(status_code=500, content={"detail":"Internal server error."})
 ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ORIGINS","http://localhost:5173").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 
 class EmailRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=100000)
 
 class BatchRequest(BaseModel):
-    emails: list[str]
+    emails: list[str] = Field(..., min_length=1, max_length=500)
 
 class RawEmailRequest(BaseModel):
-    raw_email: str
+    raw_email: str = Field(..., min_length=1, max_length=500000)
 
 class URLRequest(BaseModel):
-    url: str
+    url: str = Field(..., min_length=1, max_length=4096)
 
 class AuthRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=256)
 
 def extract_urls(text):
     return re.findall(r"https?://[^\s<>]+|www\.[^\s<>]+", text, re.I)
