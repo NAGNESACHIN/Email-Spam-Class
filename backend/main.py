@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import re
 from email import policy
 from email.parser import Parser
@@ -7,14 +8,14 @@ import json
 from datetime import datetime, timezone
 from fastapi.responses import JSONResponse
 import joblib
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.2.0")
+app = FastAPI(title="MailGuard AI API", version="3.3.0")
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):
@@ -22,7 +23,6 @@ async def unhandled_exception_handler(request, exc):
 ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ORIGINS","http://localhost:5173").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
-history = []
 
 class EmailRequest(BaseModel):
     text: str
@@ -214,7 +214,8 @@ def analyze_raw_email(request: RawEmailRequest,user: User=Depends(current_user),
     if not request.raw_email.strip(): raise HTTPException(400,"Raw email cannot be empty.")
     parsed=parse_email(request.raw_email)
     analysis=classify(parsed["body"] or request.raw_email,user.id,db)
-    return {"headers":{k:v for k,v in parsed.items() if k!="body"},"body_analysis":analysis}
+    security=analyze_email_security(parsed, parsed["body"] or request.raw_email)
+    return {"headers":{k:v for k,v in parsed.items() if k!="body"},"body_analysis":analysis,"email_security":security}
 
 
 # Advanced email-security heuristics
