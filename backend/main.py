@@ -215,3 +215,46 @@ def analyze_raw_email(request: RawEmailRequest,user: User=Depends(current_user),
     parsed=parse_email(request.raw_email)
     analysis=classify(parsed["body"] or request.raw_email,user.id,db)
     return {"headers":{k:v for k,v in parsed.items() if k!="body"},"body_analysis":analysis}
+
+
+# Advanced email-security heuristics
+from difflib import SequenceMatcher
+
+FREE_EMAIL_DOMAINS = {"gmail.com","outlook.com","hotmail.com","yahoo.com","proton.me","protonmail.com"}
+
+def _domain_from_address(value):
+    if not value or "@" not in value:
+        return None
+    return value.rsplit("@",1)[-1].strip().lower().strip("<>")
+
+def _registeredish_domain(hostname):
+    parts=(hostname or "").lower().strip(".").split(".")
+    return ".".join(parts[-2:]) if len(parts)>=2 else (parts[0] if parts else "")
+
+def _lookalike_score(a,b):
+    if not a or not b or a==b:
+        return 0.0
+    return SequenceMatcher(None,a,b).ratio()
+
+def analyze_email_security(headers, body):
+    sender=headers.get("from")
+    reply=headers.get("reply_to")
+    sender_domain=_domain_from_address(sender)
+    reply_domain=_domain_from_address(reply)
+    signals=[]
+    if sender_domain and reply_domain and sender_domain != reply_domain:
+        signals.append({"type":"reply_to_mismatch","severity":"high","detail":f"Reply-To domain {reply_domain} differs from sender domain {sender_domain}."})
+    auth=headers.get("authentication_results","")
+    for mechanism in ("spf","dkim","dmarc"):
+        if auth and re.search(rf"\\b{mechanism}\\s*=\\s*fail\\b",auth,re.I):
+            signals.append({"type":f"{mechanism}_fail","severity":"high","detail":f"{mechanism.upper()} authentication failed."})
+    subject=(headers.get("subject") or "").lower()
+    if re.search(r"verify|suspend|urgent|password|account|payment|invoice",subject):
+        signals.append({"type":"phishing_subject","severity":"medium","detail":"Subject contains common account, payment, or urgency language."})
+    urls=extract_urls(body)
+    for url in urls:
+        info=analyze_url(url)
+        if info["suspicious"]:
+            signals.append({"type":"suspicious_url","severity":"high","detail":info["reasons"][0] if info["reasons"] else "URL triggered security heuristics.","url":url})
+    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"signals":signals,
+            "risk_signal_count":len(signals),"security_risk":"high" if any(x["severity"]=="high" for x in signals) else ("medium" if signals else "low")}
