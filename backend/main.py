@@ -3,6 +3,7 @@ import re
 from email import policy
 from email.parser import Parser
 from urllib.parse import urlparse, parse_qs
+import json
 import joblib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -142,6 +143,13 @@ def analyze_url_endpoint(request: URLRequest):
 
 @app.get("/health")
 def health(): return {"status":"ok","model_loaded":model is not None}
+
+@app.get("/model-comparison")
+def model_comparison():
+    path = MODEL_PATH.parent / "comparison_metrics.json"
+    if not path.exists():
+        return {"status":"not_trained","message":"Run python ml/train.py to generate comparison metrics.","metrics":[]}
+    return json.loads(path.read_text())
 
 @app.get("/model-info")
 def model_info(): return {"model":"Logistic Regression","features":"Word + character TF-IDF n-grams","dataset":"UCI SMS Spam Collection","api_version":app.version,"status":"loaded" if model else "not trained"}
