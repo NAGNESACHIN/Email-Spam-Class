@@ -4,6 +4,7 @@ from email import policy
 from email.parser import Parser
 from urllib.parse import urlparse, parse_qs
 import json
+from datetime import datetime, timezone
 import joblib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,7 @@ MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
 app = FastAPI(title="MailGuard AI API", version="3.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
+history = []
 
 class EmailRequest(BaseModel):
     text: str
@@ -109,12 +111,15 @@ def classify(text):
     urls=url_analysis(text); signals=risk_signals(text)
     if urls["suspicious_urls"]: signals.append("One or more URLs have suspicious characteristics")
     risk_score=min(100,round(spam_probability*100+min(25,len(signals)*4)))
-    return {"prediction":label,"label":"SPAM" if label=="spam" else "NOT SPAM",
+    result={"prediction":label,"label":"SPAM" if label=="spam" else "NOT SPAM",
             "confidence":round(max(probability_map.values())*100,2),
             "spam_probability":round(spam_probability*100,2),
             "risk_level":"high" if risk_score>=75 else "medium" if risk_score>=40 else "low",
             "risk_score":risk_score,"risk_signals":signals,"url_analysis":urls,
             "explanation":explain_prediction(text)}
+    history.append({"timestamp":datetime.now(timezone.utc).isoformat(),"prediction":result["prediction"],"risk_level":result["risk_level"],"risk_score":result["risk_score"],"spam_probability":result["spam_probability"],"preview":text[:90].replace("\n"," ")})
+    if len(history)>200: del history[:-200]
+    return result
 
 def parse_email(raw):
     msg=Parser(policy=policy.default).parsestr(raw)
@@ -140,6 +145,14 @@ def parse_email(raw):
 def analyze_url_endpoint(request: URLRequest):
     if not request.url.strip(): raise HTTPException(400,"URL cannot be empty.")
     return analyze_url(request.url)
+
+@app.get("/analytics")
+def analytics():
+    total=len(history)
+    spam=sum(1 for x in history if x["prediction"]=="spam")
+    high=sum(1 for x in history if x["risk_level"]=="high")
+    medium=sum(1 for x in history if x["risk_level"]=="medium")
+    return {"total_scanned":total,"spam_detected":spam,"ham_detected":total-spam,"spam_rate":round(spam/total*100,2) if total else 0,"high_risk":high,"medium_risk":medium,"recent":history[-20:][::-1]}
 
 @app.get("/health")
 def health(): return {"status":"ok","model_loaded":model is not None}
