@@ -4,6 +4,7 @@ import zipfile
 import urllib.request
 import pandas as pd
 import joblib
+import json
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import FeatureUnion, Pipeline
@@ -20,6 +21,9 @@ DATA_DIR.mkdir(exist_ok=True)
 MODEL_DIR.mkdir(exist_ok=True)
 
 DATA_URL = "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip"
+SPAMBASE_URL = "https://archive.ics.uci.edu/static/public/94/spambase.zip"
+SPAMBASE_ZIP = DATA_DIR / "spambase.zip"
+SPAMBASE_DATA = DATA_DIR / "spambase.data"
 ZIP_PATH = DATA_DIR / "sms_spam_collection.zip"
 TXT_PATH = DATA_DIR / "SMSSpamCollection"
 EMAIL_DATASET = DATA_DIR / "email_dataset.csv"
@@ -80,6 +84,28 @@ def build_model():
     ])
 
 
+def download_spambase():
+    if SPAMBASE_DATA.exists(): return
+    print('Downloading UCI Spambase...')
+    urllib.request.urlretrieve(SPAMBASE_URL, SPAMBASE_ZIP)
+    with zipfile.ZipFile(SPAMBASE_ZIP, 'r') as z:
+        members=[m for m in z.namelist() if m.endswith('spambase.data')]
+        if not members: raise FileNotFoundError('spambase.data not found in UCI archive')
+        with z.open(members[0]) as source, open(SPAMBASE_DATA, 'wb') as target: target.write(source.read())
+
+def evaluate_spambase():
+    download_spambase()
+    df=pd.read_csv(SPAMBASE_DATA,header=None); X=df.iloc[:,:-1]; y=df.iloc[:,-1].astype(int)
+    X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.20,random_state=42,stratify=y)
+    from sklearn.ensemble import RandomForestClassifier
+    candidate=RandomForestClassifier(n_estimators=300,random_state=42,class_weight='balanced',n_jobs=-1)
+    candidate.fit(X_train,y_train); pred=candidate.predict(X_test); prob=candidate.predict_proba(X_test)[:,1]
+    tn,fp,fn,tp=confusion_matrix(y_test,pred).ravel()
+    report={'dataset':'UCI Spambase','instances':int(len(df)),'features':int(X.shape[1]),'model':'Random Forest',
+      'accuracy':round(accuracy_score(y_test,pred),4),'precision':round(precision_score(y_test,pred),4),
+      'recall':round(recall_score(y_test,pred),4),'f1':round(f1_score(y_test,pred),4),'roc_auc':round(roc_auc_score(y_test,prob),4),
+      'true_negative':int(tn),'false_positive':int(fp),'false_negative':int(fn),'true_positive':int(tp)}
+    (MODEL_DIR/'spambase_evaluation_report.json').write_text(json.dumps(report,indent=2)); print(json.dumps(report,indent=2)); return report
 def load_email_dataset(path=EMAIL_DATASET):
     if not path.exists():
         raise FileNotFoundError(
@@ -191,8 +217,11 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--email-dataset", type=str, help="CSV with label,text for real-email evaluation")
+    parser.add_argument("--spambase", action="store_true", help="Evaluate the UCI Spambase email benchmark")
     args = parser.parse_args()
-    if args.email_dataset:
+    if args.spambase:
+        evaluate_spambase()
+    elif args.email_dataset:
         evaluate_email_dataset(args.email_dataset)
     else:
         main()
