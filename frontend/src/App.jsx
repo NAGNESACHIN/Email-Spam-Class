@@ -2,8 +2,9 @@ import { useState } from "react";
 const API_URL=import.meta.env.VITE_API_URL||"http://localhost:8000";
 const samples={spam:"Congratulations! You have won a FREE cash prize. Click http://bit.ly/reward now to claim your reward!",safe:"Hi team, the meeting has been moved to 3 PM tomorrow. Please review the attached agenda before the call."};
 export default function App(){
- const [text,setText]=useState(""),[raw,setRaw]=useState(""),[result,setResult]=useState(null),[header,setHeader]=useState(null),[mode,setMode]=useState("message"),[loading,setLoading]=useState(false),[error,setError]=useState(""),[batch,setBatch]=useState([]),[url,setUrl]=useState(""),[urlResult,setUrlResult]=useState(null),[comparison,setComparison]=useState(null);
+ const [text,setText]=useState(""),[raw,setRaw]=useState(""),[result,setResult]=useState(null),[header,setHeader]=useState(null),[mode,setMode]=useState("message"),[loading,setLoading]=useState(false),[error,setError]=useState(""),[batch,setBatch]=useState([]),[url,setUrl]=useState(""),[urlResult,setUrlResult]=useState(null),[comparison,setComparison]=useState(null),[analytics,setAnalytics]=useState(null);
  async function request(path,body){const r=await fetch(API_URL+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Analysis failed");return d}
+ async function loadAnalytics(){try{setAnalytics(await fetch(API_URL+"/analytics").then(r=>r.json()))}catch(e){setError(e.message)}}
  async function loadComparison(){try{setComparison(await fetch(API_URL+"/model-comparison").then(r=>r.json()))}catch(e){setError(e.message)}}
  async function analyzeUrl(){if(!url.trim())return;setLoading(true);setError("");try{setUrlResult(await request("/analyze/url",{url}))}catch(e){setError(e.message)}finally{setLoading(false)}}
  async function analyze(){if(!text.trim())return;setLoading(true);setError("");try{setResult(await request("/predict",{text}));setHeader(null)}catch(e){setError(e.message+". Check that FastAPI is running.")}finally{setLoading(false)}}
