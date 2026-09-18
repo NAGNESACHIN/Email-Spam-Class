@@ -1,4 +1,4 @@
-# Email Spam Classifier
+# MailGuard AI — Explainable Email Security
 
 An explainable NLP-based email spam classification system using TF-IDF, Logistic Regression, FastAPI, and a risk-signal engine.
 
@@ -13,10 +13,17 @@ An explainable NLP-based email spam classification system using TF-IDF, Logistic
 - REST API with FastAPI
 - UCI SMS Spam Collection dataset
 - Clean separation between ML training and API serving
+- Raw `.eml` header and authentication analysis
+- URL risk intelligence and lookalike-domain detection
+- Unified 0–100 email threat score
+- User authentication and personal scan history
+- Batch CSV scanning
+- Model comparison and evaluation dashboard
+- Docker deployment configuration
 
 ## Architecture
 
-Email text -> TF-IDF feature extraction -> Logistic Regression -> prediction + probability -> risk signals -> API response
+Email / raw .eml → NLP classification → URL intelligence → header/authentication checks → phishing heuristics → threat score → explainable security report
 
 ## Project structure
 
@@ -24,11 +31,12 @@ Email text -> TF-IDF feature extraction -> Logistic Regression -> prediction + p
 Email-Spam-Class/
 ├── backend/
 │   ├── __init__.py
-│   └── main.py
+│   ├── main.py
+│   ├── auth.py
 ├── ml/
 │   └── train.py
 ├── data/
-├── models/
+├── frontend/\n├── models/
 ├── requirements.txt
 ├── run.py
 └── README.md
@@ -92,12 +100,20 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 
 ## Roadmap
 
-- [ ] React frontend
-- [ ] Email header parsing
-- [ ] URL reputation/risk analysis
-- [ ] Explainable token highlighting
-- [ ] Batch CSV prediction
-- [ ] Model comparison dashboard
-- [ ] Authentication and prediction history
-- [ ] Docker deployment
-- [ ] Production email dataset evaluation
+- [x] React frontend
+- [x] Email header parsing
+- [x] URL risk analysis
+- [x] Explainable model evidence
+- [x] Batch CSV prediction
+- [x] Model comparison dashboard
+- [x] Authentication and prediction history
+- [x] Docker deployment configuration
+- [x] Unified phishing threat score
+- [ ] Real-world labeled email dataset evaluation
+- [ ] Production threat-intelligence provider integration
+- [ ] Automated API/frontend test suite
+- [ ] Production deployment
+
+## Production notes
+
+Set `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`, and `VITE_API_URL` through deployment secrets/environment variables. Do not commit `.env` files or production credentials. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
