@@ -54,7 +54,37 @@ def risk_signals(text):
     if len(text) > 1000: signals.append("Message is unusually long")
     return signals
 
-def classify(text):
+
+
+def explain_prediction(text, label):
+    """Return human-readable model evidence using Logistic Regression coefficients."""
+    if not model:
+        return []
+    try:
+        features = model.named_steps["features"]
+        classifier = model.named_steps["classifier"]
+        transformed = features.transform([text])
+        feature_names = features.get_feature_names_out()
+        scores = transformed.toarray()[0] * classifier.coef_[0]
+        # Positive score pushes toward the second class; normalize for display.
+        if list(classifier.classes_).index("spam") == 0:
+            scores = -scores
+        ranked = sorted(zip(feature_names, scores), key=lambda x: x[1], reverse=True)
+        evidence = []
+        seen = set()
+        for token, score in ranked:
+            token = token.replace("word__", "").replace("char__", "")
+            token = token.strip()
+            if not token or token.lower() in seen or abs(score) < 0.01:
+                continue
+            seen.add(token.lower())
+            evidence.append({"term": token, "impact": round(float(score), 4)})
+            if len(evidence) >= 8:
+                break
+        return evidence
+    except Exception:
+        return []
+\ndef classify(text):
     if not model: raise HTTPException(503, "Model not found. Run: python ml/train.py")
     prediction = model.predict([text])[0]
     probs = model.predict_proba([text])[0]
@@ -63,13 +93,14 @@ def classify(text):
     label = "spam" if prediction == "spam" else "ham"
     urls = url_analysis(text)
     signals = risk_signals(text)
+    explanation = explain_prediction(text, label)
     if urls["suspicious_urls"]: signals.append("One or more URLs have suspicious characteristics")
     risk_score = min(100, round(spam_probability * 100 + min(25, len(signals) * 4)))
     return {"prediction": label, "label": "SPAM" if label == "spam" else "NOT SPAM",
             "confidence": round(max(probability_map.values()) * 100, 2),
             "spam_probability": round(spam_probability * 100, 2),
             "risk_level": "high" if risk_score >= 75 else "medium" if risk_score >= 40 else "low",
-            "risk_score": risk_score, "risk_signals": signals, "url_analysis": urls}
+            "risk_score": risk_score, "risk_signals": signals, "url_analysis": urls, "explanation": explanation}
 
 @app.get("/health")
 def health():
