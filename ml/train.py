@@ -11,7 +11,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
-from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
@@ -111,6 +111,7 @@ def main():
             probabilities = candidate.decision_function(X_test)
 
         spam_true = (y_test == "spam").astype(int)
+        tn, fp, fn, tp = confusion_matrix(y_test, predictions, labels=["ham","spam"]).ravel()
         metrics = {
             "model": name,
             "accuracy": round(accuracy_score(y_test, predictions), 4),
@@ -118,6 +119,9 @@ def main():
             "recall": round(recall_score(y_test, predictions, pos_label="spam"), 4),
             "f1": round(f1_score(y_test, predictions, pos_label="spam"), 4),
             "roc_auc": round(roc_auc_score(spam_true, probabilities), 4),
+            "true_negative": int(tn), "false_positive": int(fp), "false_negative": int(fn), "true_positive": int(tp),
+            "false_positive_rate": round(fp / (fp + tn), 4) if (fp + tn) else 0,
+            "false_negative_rate": round(fn / (fn + tp), 4) if (fn + tp) else 0,
         }
         comparison.append(metrics)
         print(f"{name}: accuracy={metrics['accuracy']:.4f}, F1={metrics['f1']:.4f}, ROC-AUC={metrics['roc_auc']:.4f}")
