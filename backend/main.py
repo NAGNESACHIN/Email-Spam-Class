@@ -196,6 +196,19 @@ def model_comparison():
         m["false_negative_rate_percent"]=round(m.get("false_negative_rate",0)*100,2)
     return data
 
+@app.get("/evaluation-reports")
+def evaluation_reports():
+    reports={}
+    for key, filename in {
+        "sms_benchmark":"comparison_metrics.json",
+        "spambase":"spambase_evaluation_report.json",
+        "custom_email":"email_evaluation_report.json"
+    }.items():
+        path=MODEL_PATH.parent / filename
+        if path.exists():
+            reports[key]=json.loads(path.read_text())
+    return {"reports":reports}
+
 @app.get("/model-info")
 def model_info(): return {"model":"Logistic Regression","features":"Word + character TF-IDF n-grams","dataset":"UCI SMS Spam Collection","api_version":app.version,"status":"loaded" if model else "not trained"}
 
