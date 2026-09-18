@@ -277,5 +277,10 @@ def analyze_email_security(headers, body):
         info=analyze_url(url)
         if info["suspicious"]:
             signals.append({"type":"suspicious_url","severity":"high","detail":info["reasons"][0] if info["reasons"] else "URL triggered security heuristics.","url":url})
+    high=sum(1 for x in signals if x["severity"]=="high")
+    medium=sum(1 for x in signals if x["severity"]=="medium")
+    threat_score=min(100, high*28 + medium*12)
     return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"lookalike_domains":lookalikes,"signals":signals,
-            "risk_signal_count":len(signals),"security_risk":"high" if any(x["severity"]=="high" for x in signals) else ("medium" if signals else "low")}
+            "risk_signal_count":len(signals),"high_signals":high,"medium_signals":medium,
+            "threat_score":threat_score,
+            "security_risk":"high" if threat_score>=70 else ("medium" if threat_score>=30 else "low")}
