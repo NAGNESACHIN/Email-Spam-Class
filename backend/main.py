@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 from email import policy
 from email.parser import Parser
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import joblib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.0.0")
+app = FastAPI(title="MailGuard AI API", version="3.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 
@@ -22,6 +22,9 @@ class BatchRequest(BaseModel):
 
 class RawEmailRequest(BaseModel):
     raw_email: str
+
+class URLRequest(BaseModel):
+    url: str
 
 def extract_urls(text):
     return re.findall(r"https?://[^\s<>]+|www\.[^\s<>]+", text, re.I)
@@ -43,6 +46,24 @@ def url_analysis(text):
         except ValueError:
             suspicious.append({"url": raw, "reasons": ["invalid URL format"]})
     return {"url_count": len(urls), "suspicious_urls": suspicious}
+
+def analyze_url(url):
+    raw=url.strip()
+    try:
+        p=urlparse(raw if re.match(r"^https?://",raw,re.I) else "http://"+raw)
+        host=p.hostname or ""
+        reasons=[]; score=0
+        if p.scheme!="https": reasons.append("Not using HTTPS"); score+=20
+        if "@" in (p.netloc or ""): reasons.append("Contains @ in URL authority"); score+=25
+        if re.match(r"^\\d{1,3}(\\.\\d{1,3}){3}$",host): reasons.append("Uses an IP address"); score+=30
+        if len(host.split("."))>4: reasons.append("Deep subdomain structure"); score+=15
+        if len(raw)>180: reasons.append("Unusually long URL"); score+=10
+        if any(x in host for x in ("bit.ly","tinyurl.com","t.co","goo.gl")): reasons.append("Known URL shortener"); score+=15
+        qs=parse_qs(p.query)
+        if any(k.lower() in ("token","password","passwd","otp","session") for k in qs): reasons.append("Sensitive-looking query parameter"); score+=20
+        return {"url":raw,"hostname":host,"scheme":p.scheme,"risk_score":min(100,score),"risk_level":"high" if score>=60 else "medium" if score>=30 else "low","suspicious":bool(reasons),"reasons":reasons}
+    except Exception:
+        return {"url":raw,"hostname":"","scheme":"","risk_score":80,"risk_level":"high","suspicious":True,"reasons":["Invalid URL format"]}
 
 def risk_signals(text):
     lower = text.lower()
@@ -113,6 +134,11 @@ def parse_email(raw):
         },
         "body":body_text
     }
+
+@app.post("/analyze/url")
+def analyze_url_endpoint(request: URLRequest):
+    if not request.url.strip(): raise HTTPException(400,"URL cannot be empty.")
+    return analyze_url(request.url)
 
 @app.get("/health")
 def health(): return {"status":"ok","model_loaded":model is not None}
