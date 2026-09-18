@@ -236,12 +236,33 @@ def _lookalike_score(a,b):
         return 0.0
     return SequenceMatcher(None,a,b).ratio()
 
+def detect_lookalike_domains(domain):
+    if not domain:
+        return []
+    known = {
+        "paypal.com":"PayPal", "microsoft.com":"Microsoft", "google.com":"Google",
+        "apple.com":"Apple", "amazon.com":"Amazon", "facebook.com":"Facebook",
+        "instagram.com":"Instagram", "linkedin.com":"LinkedIn"
+    }
+    root = domain.lower().strip(".")
+    normalized = root.replace("0","o").replace("1","l").replace("3","e").replace("5","s")
+    findings = []
+    for target, brand in known.items():
+        score = _lookalike_score(normalized, target)
+        if root != target and (score >= 0.86 or normalized == target):
+            findings.append({"brand":brand, "domain":root, "similarity":round(score,3),
+                             "detail":f"Domain resembles {target} and may be impersonating it."})
+    return findings
+
 def analyze_email_security(headers, body):
     sender=headers.get("from")
     reply=headers.get("reply_to")
     sender_domain=_domain_from_address(sender)
     reply_domain=_domain_from_address(reply)
     signals=[]
+    lookalikes=detect_lookalike_domains(sender_domain)
+    for item in lookalikes:
+        signals.append({"type":"lookalike_domain","severity":"high","detail":item["detail"],"brand":item["brand"],"similarity":item["similarity"]})
     if sender_domain and reply_domain and sender_domain != reply_domain:
         signals.append({"type":"reply_to_mismatch","severity":"high","detail":f"Reply-To domain {reply_domain} differs from sender domain {sender_domain}."})
     auth=headers.get("authentication_results","")
@@ -256,5 +277,5 @@ def analyze_email_security(headers, body):
         info=analyze_url(url)
         if info["suspicious"]:
             signals.append({"type":"suspicious_url","severity":"high","detail":info["reasons"][0] if info["reasons"] else "URL triggered security heuristics.","url":url})
-    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"signals":signals,
+    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"lookalike_domains":lookalikes,"signals":signals,
             "risk_signal_count":len(signals),"security_risk":"high" if any(x["severity"]=="high" for x in signals) else ("medium" if signals else "low")}
