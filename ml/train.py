@@ -22,6 +22,7 @@ MODEL_DIR.mkdir(exist_ok=True)
 DATA_URL = "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip"
 ZIP_PATH = DATA_DIR / "sms_spam_collection.zip"
 TXT_PATH = DATA_DIR / "SMSSpamCollection"
+EMAIL_DATASET = DATA_DIR / "email_dataset.csv"
 
 
 def download_dataset():
@@ -78,6 +79,57 @@ def build_model():
         )),
     ])
 
+
+def load_email_dataset(path=EMAIL_DATASET):
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Email dataset not found: {path}. Expected CSV columns: label,text"
+        )
+    df = pd.read_csv(path)
+    required = {"label", "text"}
+    if not required.issubset(df.columns):
+        raise ValueError("Email dataset must contain CSV columns: label,text")
+    df = df[["label", "text"]].dropna().drop_duplicates()
+    df["label"] = df["label"].astype(str).str.lower().str.strip().replace({
+        "1":"spam", "0":"ham", "not spam":"ham", "legitimate":"ham"
+    })
+    df["text"] = df["text"].astype(str)
+    df = df[df["label"].isin(["spam","ham"])]
+    if df["label"].nunique() < 2:
+        raise ValueError("Email dataset must contain both spam and ham labels.")
+    return df
+
+def evaluate_email_dataset(path=EMAIL_DATASET):
+    df = load_email_dataset(Path(path))
+    X_train, X_test, y_train, y_test = train_test_split(
+        df["text"], df["label"], test_size=0.20, random_state=42, stratify=df["label"]
+    )
+    candidate = build_model()
+    candidate.fit(X_train, y_train)
+    predictions = candidate.predict(X_test)
+    probabilities = candidate.predict_proba(X_test)[:, list(candidate.classes_).index("spam")]
+    spam_true = (y_test == "spam").astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_test, predictions, labels=["ham","spam"]).ravel()
+    report = {
+        "dataset": str(Path(path)),
+        "samples": int(len(df)),
+        "train_samples": int(len(X_train)),
+        "test_samples": int(len(X_test)),
+        "class_counts": {str(k): int(v) for k,v in df["label"].value_counts().items()},
+        "model": "Logistic Regression",
+        "accuracy": round(accuracy_score(y_test,predictions),4),
+        "precision": round(precision_score(y_test,predictions,pos_label="spam"),4),
+        "recall": round(recall_score(y_test,predictions,pos_label="spam"),4),
+        "f1": round(f1_score(y_test,predictions,pos_label="spam"),4),
+        "roc_auc": round(roc_auc_score(spam_true,probabilities),4),
+        "true_negative": int(tn), "false_positive": int(fp),
+        "false_negative": int(fn), "true_positive": int(tp),
+        "false_positive_rate": round(fp/(fp+tn),4) if fp+tn else 0,
+        "false_negative_rate": round(fn/(fn+tp),4) if fn+tp else 0
+    }
+    (MODEL_DIR / "email_evaluation_report.json").write_text(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2))
+    return report
 
 def main():
     download_dataset()
@@ -136,4 +188,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--email-dataset", type=str, help="CSV with label,text for real-email evaluation")
+    args = parser.parse_args()
+    if args.email_dataset:
+        evaluate_email_dataset(args.email_dataset)
+    else:
+        main()
