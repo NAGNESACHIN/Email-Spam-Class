@@ -86,7 +86,7 @@ POST to `/predict`:
 }
 ```
 
-## Important note
+## Dataset & Evaluation\n\nThe baseline model uses the UCI SMS Spam Collection. This is a benchmark for the NLP pipeline, not a representative production email corpus. For deployment decisions, evaluate on a labeled email dataset with realistic phishing, transactional, marketing, and legitimate messages, while keeping train/test sources separated to avoid leakage.\n\nRun model comparison with:\n\n```bash\npython ml/train.py\n```\n\nThis produces `models/comparison_metrics.json` containing accuracy, precision, recall, F1, and ROC-AUC for Logistic Regression, Multinomial Naive Bayes, and Linear SVM.\n\n## Important note
 
 The initial training dataset is the UCI SMS Spam Collection. It is useful for establishing the NLP pipeline, but the next project phase should add a genuine email corpus and email-specific header/URL features before claiming production-grade email filtering performance.
 
