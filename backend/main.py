@@ -9,6 +9,7 @@ import joblib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
@@ -28,6 +29,10 @@ class RawEmailRequest(BaseModel):
 
 class URLRequest(BaseModel):
     url: str
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str
 
 def extract_urls(text):
     return re.findall(r"https?://[^\s<>]+|www\.[^\s<>]+", text, re.I)
@@ -140,6 +145,24 @@ def parse_email(raw):
         },
         "body":body_text
     }
+
+@app.post("/auth/register")
+def register(request: AuthRequest, db=Depends(get_db)):
+    email=request.email.strip().lower()
+    if "@" not in email: raise HTTPException(400,"Enter a valid email.")
+    if len(request.password)<8: raise HTTPException(400,"Password must be at least 8 characters.")
+    if db.query(User).filter(User.email==email).first(): raise HTTPException(409,"Account already exists.")
+    user=User(email=email,password_hash=hash_password(request.password)); db.add(user); db.commit(); db.refresh(user)
+    return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
+
+@app.post("/auth/login")
+def login(request: AuthRequest, db=Depends(get_db)):
+    user=db.query(User).filter(User.email==request.email.strip().lower()).first()
+    if not user or not verify_password(request.password,user.password_hash): raise HTTPException(401,"Invalid email or password.")
+    return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
+
+@app.get("/auth/me")
+def me(user: User=Depends(current_user)): return {"id":user.id,"email":user.email}
 
 @app.post("/analyze/url")
 def analyze_url_endpoint(request: URLRequest):
