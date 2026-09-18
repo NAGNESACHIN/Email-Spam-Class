@@ -5,6 +5,7 @@ from email.parser import Parser
 from urllib.parse import urlparse, parse_qs
 import json
 from datetime import datetime, timezone
+from fastapi.responses import JSONResponse
 import joblib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +14,13 @@ from .auth import User, Scan, get_db, current_user, make_token, hash_password, v
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(title="MailGuard AI API", version="3.2.0")
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    return JSONResponse(status_code=500, content={"detail":"Internal server error."})
+ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ORIGINS","http://localhost:5173").split(",") if x.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 history = []
 
