@@ -70,6 +70,37 @@ def url_analysis(text):
             suspicious.append({"url": raw, "reasons": ["invalid URL format"]})
     return {"url_count": len(urls), "suspicious_urls": suspicious}
 
+# --- Threat intelligence helpers ---
+def _hostname(url: str):
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+        return host
+    except Exception:
+        return ""
+
+def _is_ip_host(host: str):
+    return bool(re.fullmatch(r"(?:\\d{1,3}\\.){3}\\d{1,3}", host))
+
+def _is_punycode(host: str):
+    return any(label.startswith("xn--") for label in host.split("."))
+
+def _domain_age_signal(host: str):
+    return {"status": "not_checked", "reason": "Live WHOIS/DNS intelligence provider not configured"}
+
+def analyze_url_intelligence(url: str):
+    host = _hostname(url)
+    parsed = urlparse(url)
+    signals=[]
+    if parsed.scheme.lower() != "https": signals.append({"severity":"medium","type":"insecure_transport","detail":"URL does not use HTTPS"})
+    if _is_ip_host(host): signals.append({"severity":"high","type":"ip_host","detail":"URL uses an IPv4 address instead of a domain"})
+    if _is_punycode(host): signals.append({"severity":"high","type":"punycode","detail":"Hostname contains punycode, which can be used in homograph attacks"})
+    if "@" in url: signals.append({"severity":"high","type":"credential_obfuscation","detail":"URL contains @ before the host boundary"})
+    if len(url) > 180: signals.append({"severity":"medium","type":"long_url","detail":"Unusually long URL"})
+    query_keys={k.lower() for k in parse_qs(parsed.query).keys()}
+    if query_keys & {"token","password","passwd","otp","session"}: signals.append({"severity":"medium","type":"sensitive_query","detail":"Sensitive credential/session parameter present"})
+    score=min(100,sum(28 if s["severity"]=="high" else 12 for s in signals))
+    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":_domain_age_signal(host)}
+
 def analyze_url(url):
     raw=url.strip()
     try:
@@ -182,7 +213,7 @@ def me(user: User=Depends(current_user)): return {"id":user.id,"email":user.emai
 @app.post("/analyze/url")
 def analyze_url_endpoint(request: URLRequest):
     if not request.url.strip(): raise HTTPException(400,"URL cannot be empty.")
-    return analyze_url(request.url)
+    return analyze_url_intelligence(request.url)
 
 @app.get("/analytics")
 def analytics(user: User=Depends(current_user), db=Depends(get_db)):
