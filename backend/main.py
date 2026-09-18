@@ -190,7 +190,11 @@ def model_comparison():
     path = MODEL_PATH.parent / "comparison_metrics.json"
     if not path.exists():
         return {"status":"not_trained","message":"Run python ml/train.py to generate comparison metrics.","metrics":[]}
-    return json.loads(path.read_text())
+    data=json.loads(path.read_text())
+    for m in data.get("metrics",[]):
+        m["false_positive_rate_percent"]=round(m.get("false_positive_rate",0)*100,2)
+        m["false_negative_rate_percent"]=round(m.get("false_negative_rate",0)*100,2)
+    return data
 
 @app.get("/model-info")
 def model_info(): return {"model":"Logistic Regression","features":"Word + character TF-IDF n-grams","dataset":"UCI SMS Spam Collection","api_version":app.version,"status":"loaded" if model else "not trained"}
