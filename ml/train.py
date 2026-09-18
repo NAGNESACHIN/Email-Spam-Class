@@ -9,7 +9,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import FeatureUnion, Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, accuracy_score, roc_auc_score
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import LinearSVC
+from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
@@ -82,29 +84,51 @@ def main():
     df = load_data()
 
     X_train, X_test, y_train, y_test = train_test_split(
-        df["text"],
-        df["label"],
-        test_size=0.20,
-        random_state=42,
-        stratify=df["label"],
+        df["text"], df["label"], test_size=0.20, random_state=42, stratify=df["label"]
     )
 
-    model = build_model()
-    print(f"Training on {len(X_train)} samples...")
-    model.fit(X_train, y_train)
+    models = {
+        "Logistic Regression": build_model(),
+        "Multinomial Naive Bayes": Pipeline([
+            ("features", TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=80000)),
+            ("classifier", MultinomialNB()),
+        ]),
+        "Linear SVM": Pipeline([
+            ("features", TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=80000)),
+            ("classifier", LinearSVC(class_weight="balanced", C=1.0)),
+        ]),
+    }
 
-    predictions = model.predict(X_test)
-    probabilities = model.predict_proba(X_test)[:, list(model.classes_).index("spam")]
+    comparison = []
+    for name, candidate in models.items():
+        print(f"Training {name} on {len(X_train)} samples...")
+        candidate.fit(X_train, y_train)
+        predictions = candidate.predict(X_test)
 
-    print("\n=== Email Spam Classifier ===")
-    print(f"Accuracy: {accuracy_score(y_test, predictions):.4f}")
-    print(f"ROC-AUC:  {roc_auc_score((y_test == 'spam').astype(int), probabilities):.4f}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, predictions))
+        if hasattr(candidate, "predict_proba"):
+            probabilities = candidate.predict_proba(X_test)[:, list(candidate.classes_).index("spam")]
+        else:
+            probabilities = candidate.decision_function(X_test)
 
-    output = MODEL_DIR / "spam_classifier.joblib"
-    joblib.dump(model, output)
-    print(f"\nModel saved to: {output}")
+        spam_true = (y_test == "spam").astype(int)
+        metrics = {
+            "model": name,
+            "accuracy": round(accuracy_score(y_test, predictions), 4),
+            "precision": round(precision_score(y_test, predictions, pos_label="spam"), 4),
+            "recall": round(recall_score(y_test, predictions, pos_label="spam"), 4),
+            "f1": round(f1_score(y_test, predictions, pos_label="spam"), 4),
+            "roc_auc": round(roc_auc_score(spam_true, probabilities), 4),
+        }
+        comparison.append(metrics)
+        print(f"{name}: accuracy={metrics['accuracy']:.4f}, F1={metrics['f1']:.4f}, ROC-AUC={metrics['roc_auc']:.4f}")
+
+    joblib.dump(models["Logistic Regression"], MODEL_DIR / "spam_classifier.joblib")
+    import json
+    (MODEL_DIR / "comparison_metrics.json").write_text(
+        json.dumps({"dataset": "UCI SMS Spam Collection", "test_size": 0.20, "random_state": 42, "metrics": comparison}, indent=2)
+    )
+    print("\nPrimary model saved to models/spam_classifier.joblib")
+    print("Comparison metrics saved to models/comparison_metrics.json")
 
 
 if __name__ == "__main__":
