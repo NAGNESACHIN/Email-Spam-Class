@@ -6,3 +6,6 @@ numpy
 joblib
 python-multipart
 pydantic
+SQLAlchemy
+PyJWT
+psycopg2-binary
