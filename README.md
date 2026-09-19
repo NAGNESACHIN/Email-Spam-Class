@@ -117,3 +117,8 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 ## Production notes
 
 Set `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`, and `VITE_API_URL` through deployment secrets/environment variables. Do not commit `.env` files or production credentials. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
+
+
+## Optional threat intelligence
+
+MailGuard can optionally enrich URL analysis with VirusTotal reputation data when `VIRUSTOTAL_API_KEY` is configured. The integration is disabled when no key is present, so the application remains functional without an external provider. VirusTotal exposes URL reports containing multi-engine analysis statistics and reputation context. See the official API documentation for current quota and usage terms.
