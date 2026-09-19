@@ -99,7 +99,32 @@ def _is_punycode(host: str):
     return any(label.startswith("xn--") for label in host.split("."))
 
 def _domain_age_signal(host: str):
-    return {"status": "not_checked", "reason": "Live WHOIS/DNS intelligence provider not configured"}
+    return {"status": "not_checked", "reason": "Live domain intelligence provider not configured"}
+
+def _virustotal_url_lookup(url: str):
+    api_key = os.getenv("VIRUSTOTAL_API_KEY")
+    if not api_key:
+        return {"status": "not_configured"}
+    try:
+        url_id = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+        request = urllib.request.Request(
+            f"https://www.virustotal.com/api/v3/urls/{url_id}",
+            headers={"x-apikey": api_key, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        attrs = data.get("data", {}).get("attributes", {})
+        stats = attrs.get("last_analysis_stats", {})
+        return {
+            "status": "found",
+            "malicious": int(stats.get("malicious", 0)),
+            "suspicious": int(stats.get("suspicious", 0)),
+            "harmless": int(stats.get("harmless", 0)),
+            "undetected": int(stats.get("undetected", 0)),
+            "reputation": attrs.get("reputation"),
+        }
+    except Exception:
+        return {"status": "unavailable"}
 
 def virustotal_url_lookup(url: str):
     """Optionally enrich URL analysis with VirusTotal reputation data.
