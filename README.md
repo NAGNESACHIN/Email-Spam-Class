@@ -122,3 +122,18 @@ Set `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`, and `VITE_API_URL` through dep
 ## Optional threat intelligence
 
 MailGuard can optionally enrich URL analysis with VirusTotal reputation data when `VIRUSTOTAL_API_KEY` is configured. The integration is disabled when no key is present, so the application remains functional without an external provider. VirusTotal exposes URL reports containing multi-engine analysis statistics and reputation context. See the official API documentation for current quota and usage terms.
+
+
+## Production deployment
+
+Backend deployment variables:
+- ENVIRONMENT=production
+- JWT_SECRET=<long random secret>
+- DATABASE_URL=<PostgreSQL connection string>
+- CORS_ORIGINS=<frontend origin>
+- VIRUSTOTAL_API_KEY=<optional URL reputation key>
+
+Frontend build variable:
+- VITE_API_URL=<public backend API URL>
+
+Run pytest and the frontend production build before deployment. Never commit production secrets or .env files.
