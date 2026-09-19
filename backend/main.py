@@ -217,6 +217,8 @@ def register(request: AuthRequest, db=Depends(get_db)):
 def login(request: AuthRequest, db=Depends(get_db)):
     user=db.query(User).filter(User.email==request.email.strip().lower()).first()
     if not user or not verify_password(request.password,user.password_hash): raise HTTPException(401,"Invalid email or password.")
+    if user.password_hash.startswith("pbkdf2$") or ":" in user.password_hash:
+        user.password_hash=hash_password(request.password); db.commit()
     return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
 
 @app.get("/auth/me")
