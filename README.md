@@ -36,7 +36,8 @@ Email-Spam-Class/
 ├── ml/
 │   └── train.py
 ├── data/
-├── frontend/\n├── models/
+├── frontend/
+├── models/
 ├── requirements.txt
 ├── run.py
 └── README.md
@@ -94,7 +95,19 @@ POST to `/predict`:
 }
 ```
 
-## Dataset & Evaluation\n\nThe baseline model uses the UCI SMS Spam Collection. This is a benchmark for the NLP pipeline, not a representative production email corpus. For deployment decisions, evaluate on a labeled email dataset with realistic phishing, transactional, marketing, and legitimate messages, while keeping train/test sources separated to avoid leakage.\n\nRun model comparison with:\n\n```bash\npython ml/train.py\n```\n\nThis produces `models/comparison_metrics.json` containing accuracy, precision, recall, F1, and ROC-AUC for Logistic Regression, Multinomial Naive Bayes, and Linear SVM.\n\n## Important note
+## Dataset & Evaluation
+
+The baseline model uses the UCI SMS Spam Collection. This is a benchmark for the NLP pipeline, not a representative production email corpus. For deployment decisions, evaluate on a labeled email dataset with realistic phishing, transactional, marketing, and legitimate messages, while keeping train/test sources separated to avoid leakage.
+
+Run model comparison with:
+
+```bash
+python ml/train.py
+```
+
+This produces `models/comparison_metrics.json` containing accuracy, precision, recall, F1, and ROC-AUC for Logistic Regression, Multinomial Naive Bayes, and Linear SVM.
+
+## Important note
 
 The initial training dataset is the UCI SMS Spam Collection. It is useful for establishing the NLP pipeline, but the next project phase should add a genuine email corpus and email-specific header/URL features before claiming production-grade email filtering performance.
 
@@ -110,8 +123,8 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] Docker deployment configuration
 - [x] Unified phishing threat score
 - [ ] Real-world labeled email dataset evaluation
-- [ ] Production threat-intelligence provider integration
-- [ ] Automated API/frontend test suite
+- [x] Optional production threat-intelligence provider integration
+- [x] Automated API/frontend test suite
 - [ ] Production deployment
 
 ## Production notes
