@@ -6,16 +6,27 @@ from email.parser import Parser
 from urllib.parse import urlparse, parse_qs
 import json
 from datetime import datetime, timezone
+from collections import defaultdict, deque
+import time
 from fastapi.responses import JSONResponse
 import joblib
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password
+from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password, valid_email
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.3.0")
+app = FastAPI(title="MailGuard AI API", version="3.4.0")
+_RATE_WINDOW_SECONDS=60
+_RATE_LIMIT=60
+_rate_hits=defaultdict(deque)
+
+def _rate_limit(request: Request):
+    now=time.monotonic(); key=request.client.host if request.client else "unknown"; hits=_rate_hits[key]
+    while hits and now-hits[0] > _RATE_WINDOW_SECONDS: hits.popleft()
+    if len(hits) >= _RATE_LIMIT: raise HTTPException(429,"Too many requests. Please try again later.")
+    hits.append(now)
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):
@@ -25,6 +36,7 @@ app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credenti
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    _rate_limit(request)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -185,9 +197,9 @@ def parse_email(raw):
         "received_hops":len(received),
         "authentication_results":auth,
         "authentication": {
-            "spf":"pass" if re.search(r"spf\\s*=\\s*pass",auth,re.I) else "fail_or_unknown",
-            "dkim":"pass" if re.search(r"dkim\\s*=\\s*pass",auth,re.I) else "fail_or_unknown",
-            "dmarc":"pass" if re.search(r"dmarc\\s*=\\s*pass",auth,re.I) else "fail_or_unknown"
+            "spf":"pass" if re.search(r"spf\s*=\s*pass",auth,re.I) else "fail_or_unknown",
+            "dkim":"pass" if re.search(r"dkim\s*=\s*pass",auth,re.I) else "fail_or_unknown",
+            "dmarc":"pass" if re.search(r"dmarc\s*=\s*pass",auth,re.I) else "fail_or_unknown"
         },
         "body":body_text
     }
@@ -195,7 +207,7 @@ def parse_email(raw):
 @app.post("/auth/register")
 def register(request: AuthRequest, db=Depends(get_db)):
     email=request.email.strip().lower()
-    if "@" not in email: raise HTTPException(400,"Enter a valid email.")
+    if not valid_email(email): raise HTTPException(400,"Enter a valid email.")
     if len(request.password)<8: raise HTTPException(400,"Password must be at least 8 characters.")
     if db.query(User).filter(User.email==email).first(): raise HTTPException(409,"Account already exists.")
     user=User(email=email,password_hash=hash_password(request.password)); db.add(user); db.commit(); db.refresh(user)
@@ -321,7 +333,7 @@ def analyze_email_security(headers, body):
         signals.append({"type":"reply_to_mismatch","severity":"high","detail":f"Reply-To domain {reply_domain} differs from sender domain {sender_domain}."})
     auth=headers.get("authentication_results","")
     for mechanism in ("spf","dkim","dmarc"):
-        if auth and re.search(rf"\\b{mechanism}\\s*=\\s*fail\\b",auth,re.I):
+        if auth and re.search(rf"\b{mechanism}\s*=\s*fail\b",auth,re.I):
             signals.append({"type":f"{mechanism}_fail","severity":"high","detail":f"{mechanism.upper()} authentication failed."})
     subject=(headers.get("subject") or "").lower()
     if re.search(r"verify|suspend|urgent|password|account|payment|invoice",subject):
