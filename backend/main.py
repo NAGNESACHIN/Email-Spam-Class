@@ -91,7 +91,7 @@ def _hostname(url: str):
         return ""
 
 def _is_ip_host(host: str):
-    return bool(re.fullmatch(r"(?:\\d{1,3}\\.){3}\\d{1,3}", host))
+    return bool(re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host))
 
 def _is_punycode(host: str):
     return any(label.startswith("xn--") for label in host.split("."))
@@ -121,7 +121,7 @@ def analyze_url(url):
         reasons=[]; score=0
         if p.scheme!="https": reasons.append("Not using HTTPS"); score+=20
         if "@" in (p.netloc or ""): reasons.append("Contains @ in URL authority"); score+=25
-        if re.match(r"^\\d{1,3}(\\.\\d{1,3}){3}$",host): reasons.append("Uses an IP address"); score+=30
+        if re.match(r"^\d{1,3}(\.\d{1,3}){3}$",host): reasons.append("Uses an IP address"); score+=30
         if len(host.split("."))>4: reasons.append("Deep subdomain structure"); score+=15
         if len(raw)>180: reasons.append("Unusually long URL"); score+=10
         if any(x in host for x in ("bit.ly","tinyurl.com","t.co","goo.gl")): reasons.append("Known URL shortener"); score+=15
