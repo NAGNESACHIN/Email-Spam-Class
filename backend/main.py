@@ -8,6 +8,8 @@ import json
 from datetime import datetime, timezone
 from collections import defaultdict, deque
 import time
+import base64
+import urllib.request
 from fastapi.responses import JSONResponse
 import joblib
 from fastapi import FastAPI, HTTPException, Depends, Request
@@ -98,6 +100,35 @@ def _is_punycode(host: str):
 
 def _domain_age_signal(host: str):
     return {"status": "not_checked", "reason": "Live WHOIS/DNS intelligence provider not configured"}
+
+def virustotal_url_lookup(url: str):
+    """Optionally enrich URL analysis with VirusTotal reputation data.
+
+    The integration is disabled unless VIRUSTOTAL_API_KEY is configured, so
+    local development and CI never require an external network call.
+    """
+    api_key = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
+    if not api_key:
+        return {"status": "not_configured"}
+    try:
+        url_id = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
+        request = urllib.request.Request(
+            f"https://www.virustotal.com/api/v3/urls/{url_id}",
+            headers={"x-apikey": api_key, "Accept": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        stats = payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+        return {
+            "status": "available",
+            "malicious": int(stats.get("malicious", 0)),
+            "suspicious": int(stats.get("suspicious", 0)),
+            "harmless": int(stats.get("harmless", 0)),
+            "undetected": int(stats.get("undetected", 0)),
+        }
+    except Exception as exc:
+        return {"status": "unavailable", "reason": type(exc).__name__}
 
 def analyze_url_intelligence(url: str):
     host = _hostname(url)
