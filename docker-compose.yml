@@ -4,9 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     environment:
-      DATABASE_URL: ${DATABASE_URL:-sqlite:///./mailguard.db}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/mailguard.db}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+    volumes:
+      - mailguard_data:/app/data
     ports:
       - "8000:8000"
   frontend:
@@ -19,3 +22,6 @@ services:
       - backend
     ports:
       - "80:80"
+
+volumes:
+  mailguard_data:
