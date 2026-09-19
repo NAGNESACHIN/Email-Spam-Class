@@ -10,3 +10,4 @@ SQLAlchemy
 PyJWT
 psycopg2-binary
 pytest>=8.0,<9.0
+argon2-cffi>=23.1,<26
