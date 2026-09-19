@@ -1,4 +1,4 @@
-import os, hashlib, secrets
+import os, hashlib, secrets, re
 from datetime import datetime, timezone, timedelta
 import jwt
 from fastapi import Depends, Header, HTTPException
@@ -10,6 +10,9 @@ engine=create_engine(DATABASE_URL,connect_args={"check_same_thread":False} if DA
 SessionLocal=sessionmaker(bind=engine,autoflush=False,autocommit=False)
 Base=declarative_base()
 SECRET_KEY=os.getenv("JWT_SECRET","change-this-in-production")
+ENVIRONMENT=os.getenv("ENVIRONMENT","development").lower()
+if ENVIRONMENT in {"production","prod"} and SECRET_KEY == "change-this-in-production":
+    raise RuntimeError("JWT_SECRET must be set to a strong random value in production.")
 
 class User(Base):
     __tablename__="users"
@@ -37,16 +40,29 @@ def get_db():
     finally: db.close()
 
 def hash_password(password):
-    salt=secrets.token_bytes(16)
-    digest=hashlib.pbkdf2_hmac("sha256",password.encode(),salt,120000)
-    return salt.hex()+":"+digest.hex()
+    try:
+        from argon2 import PasswordHasher
+        return "argon2$" + PasswordHasher().hash(password)
+    except ImportError:
+        salt=secrets.token_bytes(16)
+        digest=hashlib.pbkdf2_hmac("sha256",password.encode(),salt,120000)
+        return "pbkdf2$" + salt.hex()+":"+digest.hex()
 
 def verify_password(password,stored):
     try:
+        if stored.startswith("argon2$"):
+            from argon2 import PasswordHasher
+            return PasswordHasher().verify(stored[7:], password)
+        if stored.startswith("pbkdf2$"):
+            stored=stored[7:]
         salt,digest=stored.split(":")
         actual=hashlib.pbkdf2_hmac("sha256",password.encode(),bytes.fromhex(salt),120000).hex()
         return secrets.compare_digest(actual,digest)
-    except ValueError: return False
+    except Exception:
+        return False
+
+def valid_email(email):
+    return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email))
 
 def make_token(user):
     return jwt.encode({"sub":str(user.id),"email":user.email,"exp":datetime.now(timezone.utc)+timedelta(hours=24)},SECRET_KEY,algorithm="HS256")
