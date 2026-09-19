@@ -99,7 +99,7 @@ def analyze_url_intelligence(url: str):
     query_keys={k.lower() for k in parse_qs(parsed.query).keys()}
     if query_keys & {"token","password","passwd","otp","session"}: signals.append({"severity":"medium","type":"sensitive_query","detail":"Sensitive credential/session parameter present"})
     score=min(100,sum(28 if s["severity"]=="high" else 12 for s in signals))
-    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":_domain_age_signal(host)}
+    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":_domain_age_signal(host),"reputation": virustotal_url_lookup(url)}
 
 def analyze_url(url):
     raw=url.strip()
