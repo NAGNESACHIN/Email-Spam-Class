@@ -11,4 +11,4 @@ PyJWT
 psycopg2-binary
 pytest>=8.0,<9.0
 argon2-cffi>=23.1,<26
-httpx2>=0.1,<1
+httpx2>=2.0,<3
