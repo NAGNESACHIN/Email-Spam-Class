@@ -88,3 +88,14 @@ def test_unicode_homoglyph_detection():
     from backend.main import analyze_url_intelligence
     result = analyze_url_intelligence("https://раypal.example/login")
     assert any(s["type"] == "unicode_homoglyph" for s in result["signals"])
+
+
+def test_display_name_spoof_detection():
+    from backend.main import analyze_email_security
+    result = analyze_email_security({"from": "PayPal Security <alerts@evil.example>", "reply_to": "", "return_path": "", "authentication_results": "", "subject": "Account notice"}, "Please verify")
+    assert any(s["type"] == "display_name_spoof" for s in result["signals"])
+
+def test_return_path_mismatch_detection():
+    from backend.main import analyze_email_security
+    result = analyze_email_security({"from": "Billing <billing@example.com>", "reply_to": "", "return_path": "bounce@other.example", "authentication_results": "", "subject": ""}, "Invoice")
+    assert any(s["type"] == "return_path_mismatch" for s in result["signals"])
