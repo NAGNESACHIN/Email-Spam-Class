@@ -13,8 +13,8 @@ SECRET_KEY=os.getenv("JWT_SECRET","change-this-in-production")
 ENVIRONMENT=os.getenv("ENVIRONMENT","development").lower()
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL="postgresql://" + DATABASE_URL[len("postgres://"): ]
-if ENVIRONMENT in {"production","prod"} and SECRET_KEY == "change-this-in-production":
-    raise RuntimeError("JWT_SECRET must be set to a strong random value in production.")
+if ENVIRONMENT in {"production","prod"} and (SECRET_KEY == "change-this-in-production" or len(SECRET_KEY) < 32):
+    raise RuntimeError("JWT_SECRET must be set to a strong random value (32+ characters) in production.")
 
 class User(Base):
     __tablename__="users"
