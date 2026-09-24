@@ -538,13 +538,29 @@ def build_unified_threat_assessment(ml_result, security):
         )
     }
 
+def _display_name_from_address(value):
+    if not value:
+        return ""
+    match=re.match(r'^\s*"?([^"<]+?)"?\s*<[^>]+>', value)
+    return match.group(1).strip() if match else ""
+
+def _known_brand_display_name_mismatch(sender, sender_domain):
+    display=_display_name_from_address(sender).lower()
+    if not display or not sender_domain:
+        return None
+    brands={"paypal":"paypal.com","microsoft":"microsoft.com","google":"google.com","apple":"apple.com","amazon":"amazon.com","facebook":"facebook.com","instagram":"instagram.com","linkedin":"linkedin.com"}
+    for brand,domain in brands.items():
+        if brand in display and sender_domain != domain and not sender_domain.endswith("." + domain):
+            return {"type":"display_name_spoof","severity":"high","detail":f'Display name references {brand.title()} but sender domain is {sender_domain}.'}
+    return None
+
 def analyze_email_security(headers, body):
     sender=headers.get("from")
     reply=headers.get("reply_to")
     sender_domain=_domain_from_address(sender)
     reply_domain=_domain_from_address(reply)
     signals=[]
-    lookalikes=detect_lookalike_domains(sender_domain)
+    lookalikes=detect_lookalike_domains(sender_domain)\n    display_spoof=_known_brand_display_name_mismatch(sender,sender_domain)\n    if display_spoof: signals.append(display_spoof)
     for item in lookalikes:
         signals.append({"type":"lookalike_domain","severity":"high","detail":item["detail"],"brand":item["brand"],"similarity":item["similarity"]})
     if sender_domain and reply_domain and sender_domain != reply_domain:
@@ -564,7 +580,7 @@ def analyze_email_security(headers, body):
     high=sum(1 for x in signals if x["severity"]=="high")
     medium=sum(1 for x in signals if x["severity"]=="medium")
     threat_score=min(100, high*28 + medium*12)
-    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"lookalike_domains":lookalikes,"signals":signals,
+    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"return_path_domain":return_path_domain,"lookalike_domains":lookalikes,"signals":signals,
             "risk_signal_count":len(signals),"high_signals":high,"medium_signals":medium,
             "threat_score":threat_score,
             "security_risk":"high" if threat_score>=70 else ("medium" if threat_score>=30 else "low")}
