@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password, valid_email
 
 ROOT = Path(__file__).resolve().parents[1]
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
 app = FastAPI(title="MailGuard AI API", version="3.4.0")
 _RATE_WINDOW_SECONDS=60
