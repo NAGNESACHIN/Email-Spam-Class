@@ -426,6 +426,7 @@ def analyze_raw_email(request: RawEmailRequest,user: User=Depends(current_user),
     security=analyze_email_security(parsed, parsed["body"] or request.raw_email)
     security["html_analysis"]=analyze_html_links(parsed.get("html_body",""))
     security["attachment_analysis"]=parsed.get("attachments",{"count":0,"attachments":[]})
+    security["unified_threat"]=build_unified_threat_assessment(analysis,security)
     return {"headers":{k:v for k,v in parsed.items() if k not in ("body","html_body","attachments")},"body_analysis":analysis,"email_security":security}
 
 
@@ -465,6 +466,57 @@ def detect_lookalike_domains(domain):
             findings.append({"brand":brand, "domain":root, "similarity":round(score,3),
                              "detail":f"Domain resembles {target} and may be impersonating it."})
     return findings
+
+def build_unified_threat_assessment(ml_result, security):
+    signals=list(security.get("signals",[]))
+    html=security.get("html_analysis") or {}
+    attachments=security.get("attachment_analysis") or {}
+
+    for item in html.get("mismatches",[]):
+        signals.append({"type":"html_destination_mismatch","severity":"high",
+                        "detail":item.get("detail","Visible link text differs from destination.")})
+    if html.get("ip_host_count",0):
+        signals.append({"type":"html_ip_destination","severity":"high",
+                        "detail":"HTML email contains a link whose destination uses an IP address."})
+    if html.get("punycode_count",0):
+        signals.append({"type":"html_punycode_destination","severity":"high",
+                        "detail":"HTML email contains a punycode destination."})
+    for item in attachments.get("attachments",[]):
+        for flag in item.get("flags",[]):
+            severity="high" if "dangerous" in flag or "macro" in flag else "medium"
+            signals.append({"type":"attachment_risk","severity":severity,
+                            "detail":f"Attachment {item.get('filename','unknown')} flagged: {flag}."})
+
+    high=sum(1 for s in signals if s.get("severity")=="high")
+    medium=sum(1 for s in signals if s.get("severity")=="medium")
+    ml_score=float(ml_result.get("risk_score",0))
+    heuristic_score=min(100,high*18+medium*8)
+    threat_score=min(100,round(ml_score*0.55+heuristic_score*0.45))
+
+    if threat_score >= 75:
+        verdict="high"
+    elif threat_score >= 45:
+        verdict="medium"
+    else:
+        verdict="low"
+
+    return {
+        "threat_score": threat_score,
+        "risk_level": verdict,
+        "high_signals": high,
+        "medium_signals": medium,
+        "signal_count": len(signals),
+        "model_risk_score": round(ml_score,2),
+        "security_heuristic_score": round(heuristic_score,2),
+        "signals": signals[:30],
+        "recommendation": (
+            "Do not interact with links or attachments; verify the sender through a trusted channel."
+            if verdict=="high" else
+            "Review sender, authentication results, links, and attachments before interacting."
+            if verdict=="medium" else
+            "No strong phishing indicators were detected; continue normal email hygiene."
+        )
+    }
 
 def analyze_email_security(headers, body):
     sender=headers.get("from")
