@@ -99,3 +99,18 @@ def test_return_path_mismatch_detection():
     from backend.main import analyze_email_security
     result = analyze_email_security({"from": "Billing <billing@example.com>", "reply_to": "", "return_path": "bounce@other.example", "authentication_results": "", "subject": ""}, "Invoice")
     assert any(s["type"] == "return_path_mismatch" for s in result["signals"])
+
+
+def test_unified_assessment_includes_domain_signal_and_categories():
+    from backend.main import build_unified_threat_assessment
+    result = build_unified_threat_assessment(
+        {"risk_score": 20},
+        {
+            "sender_domain": "mailinator.com",
+            "signals": [],
+            "html_analysis": {},
+            "attachment_analysis": {"attachments": []},
+        },
+    )
+    assert any(s["type"] == "disposable_domain" for s in result["signals"])
+    assert all("category" in s for s in result["signals"])
