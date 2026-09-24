@@ -156,6 +156,32 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] Automated API/frontend test suite
 - [ ] Production deployment
 
+## Advanced evaluation
+
+For a labeled raw-email CSV with `label,text`, evaluate the email model with:
+
+```bash
+python ml/train.py --email-dataset data/email_dataset.csv
+```
+
+If the dataset contains a campaign/source column, use grouped evaluation to reduce template or campaign leakage:
+
+```bash
+python ml/train.py --email-dataset data/email_dataset.csv --group-column campaign_id
+```
+
+The report records the split strategy. A grouped split is preferred when multiple messages can originate from the same campaign, sender batch, or template family.
+
+## Production security checklist
+
+- Set a unique 32+ character `JWT_SECRET` in production.
+- Use PostgreSQL rather than SQLite for multi-instance deployments.
+- Set explicit production `CORS_ORIGINS` and serve the frontend/API over HTTPS.
+- Keep VirusTotal and other threat-intelligence credentials in the deployment secret manager.
+- Put rate limiting behind a shared Redis/store when running multiple API instances.
+- Do not execute uploaded attachments or fetch arbitrary user-controlled URLs.
+- Treat the SMS-trained model as a baseline until representative labeled email evaluation is available.
+
 ## Production notes
 
 Set `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`, and `VITE_API_URL` through deployment secrets/environment variables. Do not commit `.env` files or production credentials. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
