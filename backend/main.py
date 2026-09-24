@@ -24,6 +24,9 @@ app = FastAPI(title="MailGuard AI API", version="3.4.0")
 _RATE_WINDOW_SECONDS=60
 _RATE_LIMIT=60
 _rate_hits=defaultdict(deque)
+_AUTH_RATE_WINDOW_SECONDS=300
+_AUTH_RATE_LIMIT=10
+_auth_hits=defaultdict(deque)
 
 def _rate_limit(request: Request):
     now=time.monotonic(); key=request.client.host if request.client else "unknown"; hits=_rate_hits[key]
@@ -331,8 +334,19 @@ def parse_email(raw):
         "attachments": analyze_attachments(msg)
     }
 
+def _auth_rate_limit(request: Request):
+    now=time.monotonic()
+    key=request.client.host if request.client else "unknown"
+    hits=_auth_hits[key]
+    while hits and now-hits[0] > _AUTH_RATE_WINDOW_SECONDS:
+        hits.popleft()
+    if len(hits) >= _AUTH_RATE_LIMIT:
+        raise HTTPException(429,"Too many authentication attempts. Please try again later.")
+    hits.append(now)
+
 @app.post("/auth/register")
 def register(request: AuthRequest, db=Depends(get_db)):
+    _auth_rate_limit(request)
     email=request.email.strip().lower()
     if not valid_email(email): raise HTTPException(400,"Enter a valid email.")
     if len(request.password)<8: raise HTTPException(400,"Password must be at least 8 characters.")
@@ -342,6 +356,7 @@ def register(request: AuthRequest, db=Depends(get_db)):
 
 @app.post("/auth/login")
 def login(request: AuthRequest, db=Depends(get_db)):
+    _auth_rate_limit(request)
     user=db.query(User).filter(User.email==request.email.strip().lower()).first()
     if not user or not verify_password(request.password,user.password_hash): raise HTTPException(401,"Invalid email or password.")
     if user.password_hash.startswith("pbkdf2$") or ":" in user.password_hash:
