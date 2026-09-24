@@ -458,7 +458,8 @@ FREE_EMAIL_DOMAINS = {"gmail.com","outlook.com","hotmail.com","yahoo.com","proto
 def _domain_from_address(value):
     if not value or "@" not in value:
         return None
-    return value.rsplit("@",1)[-1].strip().lower().strip("<>")
+    domain=value.rsplit("@",1)[-1].strip().lower().strip("<>")
+    return domain.split(">",1)[0].strip().strip(".")
 
 def _registeredish_domain(hostname):
     parts=(hostname or "").lower().strip(".").split(".")
