@@ -35,3 +35,6 @@ button,textarea{font:inherit}.shell{max-width:1180px;margin:auto;padding:26px 28
 .unified-breakdown small{display:block;opacity:.65;font-size:.78rem;margin-bottom:4px}
 .unified-breakdown b{font-size:1.05rem}
 @media(max-width:800px){.unified-breakdown{grid-template-columns:1fr 1fr}}
+
+.threat-decision{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid rgba(127,127,127,.18);border-radius:14px;padding:14px 16px;margin:14px 0;background:rgba(127,127,127,.05)}
+.threat-decision small{display:block;opacity:.65;font-size:.78rem;margin-bottom:4px}.threat-decision strong{font-size:1.05rem}.threat-decision p{margin:0;max-width:720px;line-height:1.5}@media(max-width:800px){.threat-decision{display:block}.threat-decision p{margin-top:10px}}
