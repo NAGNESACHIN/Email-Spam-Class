@@ -492,26 +492,35 @@ def build_unified_threat_assessment(ml_result, security):
     signals=list(security.get("signals",[]))
     sender_domain=security.get("sender_domain")
     domain_intelligence=_domain_intelligence(sender_domain)
+    if domain_intelligence.get("signal"):
+        signals.append(domain_intelligence["signal"])
     html=security.get("html_analysis") or {}
     attachments=security.get("attachment_analysis") or {}
 
     for item in html.get("mismatches",[]):
-        signals.append({"type":"html_destination_mismatch","severity":"high",
-                        "detail":item.get("detail","Visible link text differs from destination.")})
+        signals.append({"type":"html_destination_mismatch","severity":"high","category":"url","detail":item.get("detail","Visible link text differs from destination.")})
     if html.get("ip_host_count",0):
-        signals.append({"type":"html_ip_destination","severity":"high",
-                        "detail":"HTML email contains a link whose destination uses an IP address."})
+        signals.append({"type":"html_ip_destination","severity":"high","category":"url","detail":"HTML email contains a link whose destination uses an IP address."})
     if html.get("punycode_count",0):
-        signals.append({"type":"html_punycode_destination","severity":"high",
-                        "detail":"HTML email contains a punycode destination."})
+        signals.append({"type":"html_punycode_destination","severity":"high","category":"url","detail":"HTML email contains a punycode destination."})
     for item in attachments.get("attachments",[]):
         for flag in item.get("flags",[]):
             severity="high" if "dangerous" in flag or "macro" in flag else "medium"
-            signals.append({"type":"attachment_risk","severity":severity,
+            signals.append({"type":"attachment_risk","severity":severity,"category":"attachment",
                             "detail":f"Attachment {item.get('filename','unknown')} flagged: {flag}."})
 
-    high=sum(1 for s in signals if s.get("severity")=="high")
-    medium=sum(1 for s in signals if s.get("severity")=="medium")
+    category_map={"spf_fail":"authentication","dkim_fail":"authentication","dmarc_fail":"authentication",
+                  "reply_to_mismatch":"identity","return_path_mismatch":"identity","display_name_spoof":"identity",
+                  "lookalike_domain":"identity","disposable_domain":"domain","unicode_homoglyph":"domain",
+                  "suspicious_url":"url","phishing_subject":"content"}
+    normalized=[]
+    for signal in signals:
+        item=dict(signal)
+        item.setdefault("category",category_map.get(item.get("type"),"security"))
+        normalized.append(item)
+
+    high=sum(1 for item in normalized if item.get("severity")=="high")
+    medium=sum(1 for item in normalized if item.get("severity")=="medium")
     ml_score=float(ml_result.get("risk_score",0))
     heuristic_score=min(100,high*18+medium*8)
     threat_score=min(100,round(ml_score*0.55+heuristic_score*0.45))
@@ -524,15 +533,16 @@ def build_unified_threat_assessment(ml_result, security):
         verdict="low"
 
     return {
-        "threat_score": threat_score,
-        "risk_level": verdict,
-        "high_signals": high,
-        "medium_signals": medium,
-        "signal_count": len(signals),
-        "model_risk_score": round(ml_score,2),\n        "domain_intelligence": domain_intelligence,
-        "security_heuristic_score": round(heuristic_score,2),
-        "signals": signals[:30],
-        "recommendation": (
+        "threat_score":threat_score,
+        "risk_level":verdict,
+        "high_signals":high,
+        "medium_signals":medium,
+        "signal_count":len(normalized),
+        "model_risk_score":round(ml_score,2),
+        "domain_intelligence":domain_intelligence,
+        "security_heuristic_score":round(heuristic_score,2),
+        "signals":normalized[:30],
+        "recommendation":(
             "Do not interact with links or attachments; verify the sender through a trusted channel."
             if verdict=="high" else
             "Review sender, authentication results, links, and attachments before interacting."
@@ -554,7 +564,8 @@ def _known_brand_display_name_mismatch(sender, sender_domain):
     brands={"paypal":"paypal.com","microsoft":"microsoft.com","google":"google.com","apple":"apple.com","amazon":"amazon.com","facebook":"facebook.com","instagram":"instagram.com","linkedin":"linkedin.com"}
     for brand,domain in brands.items():
         if brand in display and sender_domain != domain and not sender_domain.endswith("." + domain):
-            return {"type":"display_name_spoof","severity":"high","detail":f'Display name references {brand.title()} but sender domain is {sender_domain}.'}
+            return {"type":"display_name_spoof","severity":"high","category":"identity",
+                    "detail":f"Display name references {brand.title()} but sender domain is {sender_domain}."}
     return None
 
 def analyze_email_security(headers, body):
@@ -562,28 +573,40 @@ def analyze_email_security(headers, body):
     reply=headers.get("reply_to")
     sender_domain=_domain_from_address(sender)
     reply_domain=_domain_from_address(reply)
+    return_path_domain=_domain_from_address(headers.get("return_path"))
     signals=[]
-    lookalikes=detect_lookalike_domains(sender_domain)\n    display_spoof=_known_brand_display_name_mismatch(sender,sender_domain)\n    if display_spoof: signals.append(display_spoof)
+    lookalikes=detect_lookalike_domains(sender_domain)
+    display_spoof=_known_brand_display_name_mismatch(sender,sender_domain)
+    if display_spoof:
+        signals.append(display_spoof)
     for item in lookalikes:
-        signals.append({"type":"lookalike_domain","severity":"high","detail":item["detail"],"brand":item["brand"],"similarity":item["similarity"]})
+        signals.append({"type":"lookalike_domain","severity":"high","category":"identity",
+                        "detail":item["detail"],"brand":item["brand"],"similarity":item["similarity"]})
     if sender_domain and reply_domain and sender_domain != reply_domain:
-        signals.append({"type":"reply_to_mismatch","severity":"high","detail":f"Reply-To domain {reply_domain} differs from sender domain {sender_domain}."})
+        signals.append({"type":"reply_to_mismatch","severity":"high","category":"identity",
+                        "detail":f"Reply-To domain {reply_domain} differs from sender domain {sender_domain}."})
+    if sender_domain and return_path_domain and sender_domain != return_path_domain:
+        signals.append({"type":"return_path_mismatch","severity":"medium","category":"identity",
+                        "detail":f"Return-Path domain {return_path_domain} differs from sender domain {sender_domain}."})
     auth=headers.get("authentication_results","")
     for mechanism in ("spf","dkim","dmarc"):
         if auth and re.search(rf"\b{mechanism}\s*=\s*fail\b",auth,re.I):
-            signals.append({"type":f"{mechanism}_fail","severity":"high","detail":f"{mechanism.upper()} authentication failed."})
+            signals.append({"type":f"{mechanism}_fail","severity":"high","category":"authentication",
+                            "detail":f"{mechanism.upper()} authentication failed."})
     subject=(headers.get("subject") or "").lower()
     if re.search(r"verify|suspend|urgent|password|account|payment|invoice",subject):
-        signals.append({"type":"phishing_subject","severity":"medium","detail":"Subject contains common account, payment, or urgency language."})
-    urls=extract_urls(body)
-    for url in urls:
+        signals.append({"type":"phishing_subject","severity":"medium","category":"content",
+                        "detail":"Subject contains common account, payment, or urgency language."})
+    for url in extract_urls(body):
         info=analyze_url(url)
         if info["suspicious"]:
-            signals.append({"type":"suspicious_url","severity":"high","detail":info["reasons"][0] if info["reasons"] else "URL triggered security heuristics.","url":url})
-    high=sum(1 for x in signals if x["severity"]=="high")
-    medium=sum(1 for x in signals if x["severity"]=="medium")
-    threat_score=min(100, high*28 + medium*12)
-    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"return_path_domain":return_path_domain,"lookalike_domains":lookalikes,"signals":signals,
-            "risk_signal_count":len(signals),"high_signals":high,"medium_signals":medium,
-            "threat_score":threat_score,
+            signals.append({"type":"suspicious_url","severity":"high","category":"url",
+                            "detail":info["reasons"][0] if info["reasons"] else "URL triggered security heuristics.","url":url})
+    high=sum(1 for item in signals if item["severity"]=="high")
+    medium=sum(1 for item in signals if item["severity"]=="medium")
+    threat_score=min(100,high*28 + medium*12)
+    return {"sender_domain":sender_domain,"reply_to_domain":reply_domain,"return_path_domain":return_path_domain,
+            "lookalike_domains":lookalikes,"signals":signals,"risk_signal_count":len(signals),
+            "high_signals":high,"medium_signals":medium,"threat_score":threat_score,
             "security_risk":"high" if threat_score>=70 else ("medium" if threat_score>=30 else "low")}
+
