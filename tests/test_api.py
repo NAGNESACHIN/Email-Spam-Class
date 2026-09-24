@@ -76,3 +76,15 @@ def test_unified_threat_assessment_escalates_phishing_signals():
     assert result["risk_level"] == "high"
     assert result["threat_score"] >= 75
     assert result["high_signals"] >= 3
+
+
+def test_url_domain_intelligence_flags_disposable_domain():
+    from backend.main import analyze_url_intelligence
+    result = analyze_url_intelligence("https://mailinator.com/login")
+    assert result["domain_intelligence"]["is_disposable"] is True
+    assert any(s["type"] == "disposable_domain" for s in result["signals"])
+
+def test_unicode_homoglyph_detection():
+    from backend.main import analyze_url_intelligence
+    result = analyze_url_intelligence("https://раypal.example/login")
+    assert any(s["type"] == "unicode_homoglyph" for s in result["signals"])
