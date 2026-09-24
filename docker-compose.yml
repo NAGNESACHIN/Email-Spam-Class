@@ -6,8 +6,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/mailguard.db}
       ENVIRONMENT: ${ENVIRONMENT:-development}
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
     volumes:
       - mailguard_data:/app/data
     ports:
@@ -19,7 +19,8 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "80:80"
 
