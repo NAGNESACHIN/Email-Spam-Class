@@ -105,7 +105,35 @@ Run model comparison with:
 python ml/train.py
 ```
 
-This produces `models/comparison_metrics.json` containing accuracy, precision, recall, F1, and ROC-AUC for Logistic Regression, Multinomial Naive Bayes, and Linear SVM.
+This produces `models/comparison_metrics.json` containing accuracy, precision, recall, F1, ROC-AUC, false-positive rate, false-negative rate, and confusion-matrix counts for Logistic Regression, Multinomial Naive Bayes, and Linear SVM.
+
+### Email-domain benchmark
+
+UCI Spambase is available as an engineered-feature email benchmark. Run:
+
+```bash
+python ml/train.py --spambase
+```
+
+This writes `models/spambase_evaluation_report.json`. Spambase is useful for validating an email-oriented classifier pipeline, but its 57 numeric features are not raw email text, so its results must not be presented as direct validation of the raw-email NLP classifier.
+
+### Custom labeled email corpus
+
+For a representative email evaluation, provide a CSV with exactly these required columns:
+
+```text
+label,text
+ham,"Your order has shipped..."
+spam,"Urgent: verify your account..."
+```
+
+Then run:
+
+```bash
+python ml/train.py --email-dataset data/email_dataset.csv
+```
+
+The evaluator performs a stratified 80/20 holdout split and writes `models/email_evaluation_report.json`. Keep messages or source campaigns separated across train/test when constructing the dataset to reduce duplicate/template leakage.
 
 ## Important note
 
@@ -122,7 +150,8 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] Authentication and prediction history
 - [x] Docker deployment configuration
 - [x] Unified phishing threat score
-- [ ] Real-world labeled email dataset evaluation
+- [x] Email benchmark evaluation tooling (UCI Spambase + custom labeled-email CSV)
+- [ ] Representative real-world labeled email dataset evaluation
 - [x] Optional production threat-intelligence provider integration
 - [x] Automated API/frontend test suite
 - [ ] Production deployment
