@@ -3,6 +3,7 @@ import os
 import re
 from email import policy
 from email.parser import Parser
+from html.parser import HTMLParser
 from urllib.parse import urlparse, parse_qs
 import json
 from datetime import datetime, timezone
@@ -240,6 +241,74 @@ def classify(text, user_id=None, db=None):
         db.add(Scan(user_id=user_id,prediction=result["prediction"],risk_level=result["risk_level"],risk_score=result["risk_score"],spam_probability=result["spam_probability"],preview=text[:90].replace("\n"," "))); db.commit()
     return result
 
+
+class _HTMLLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links=[]
+        self._current_href=None
+        self._text=[]
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == "a":
+            attrs=dict(attrs)
+            self._current_href=attrs.get("href")
+            self._text=[]
+    def handle_data(self, data):
+        if self._current_href is not None:
+            self._text.append(data)
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._current_href is not None:
+            self.links.append({"text":" ".join("".join(self._text).split()),"href":self._current_href})
+            self._current_href=None
+            self._text=[]
+
+def analyze_html_links(html):
+    parser=_HTMLLinkParser()
+    try:
+        parser.feed(html or "")
+        parser.close()
+    except Exception:
+        return {"link_count":0,"mismatches":[],"suspicious_links":[],"parse_error":True}
+    mismatches=[]; suspicious=[]
+    for link in parser.links:
+        href=(link.get("href") or "").strip()
+        text=(link.get("text") or "").strip()
+        if not href or not re.match(r"^https?://",href,re.I):
+            continue
+        destination=_hostname(href)
+        visible_match=re.search(r"(?:https?://)?(?:www\.)?([^/\s]+)",text,re.I)
+        visible_host=(visible_match.group(1).lower().rstrip(".") if visible_match else "")
+        if visible_host and destination and visible_host != destination:
+            mismatches.append({"text":text,"href":href,"visible_host":visible_host,"destination_host":destination})
+        if "@" in href or _is_ip_host(destination) or _is_punycode(destination):
+            suspicious.append({"text":text,"href":href,"destination_host":destination})
+    return {"link_count":len(parser.links),"mismatches":mismatches,"suspicious_links":suspicious,"parse_error":False}
+
+DANGEROUS_ATTACHMENT_EXTENSIONS={"exe","scr","bat","cmd","com","js","jse","vbs","vbe","wsf","wsh","msi","jar","hta","ps1","dll","iso","img"}
+MACRO_ATTACHMENT_EXTENSIONS={"docm","xlsm","pptm","xlam","dotm","xltm"}
+ARCHIVE_ATTACHMENT_EXTENSIONS={"zip","rar","7z","iso","img"}
+
+def analyze_attachments(msg):
+    attachments=[]
+    for part in msg.walk():
+        filename=part.get_filename()
+        if not filename:
+            continue
+        payload=part.get_payload(decode=True)
+        size=len(payload) if payload is not None else 0
+        extension=filename.rsplit(".",1)[-1].lower() if "." in filename else ""
+        signals=[]
+        if extension in DANGEROUS_ATTACHMENT_EXTENSIONS:
+            signals.append({"severity":"high","type":"executable_attachment","detail":"Attachment uses an executable or script-capable extension."})
+        if extension in MACRO_ATTACHMENT_EXTENSIONS:
+            signals.append({"severity":"high","type":"macro_attachment","detail":"Attachment can contain Office macros."})
+        if extension in ARCHIVE_ATTACHMENT_EXTENSIONS:
+            signals.append({"severity":"medium","type":"archive_attachment","detail":"Archive or disk-image attachment can conceal nested payloads."})
+        if size > 10*1024*1024:
+            signals.append({"severity":"medium","type":"oversized_attachment","detail":"Attachment exceeds 10 MB."})
+        attachments.append({"filename":filename,"content_type":part.get_content_type(),"extension":extension,"size_bytes":size,"signals":signals})
+    return {"count":len(attachments),"attachments":attachments}
+
 def parse_email(raw):
     msg=Parser(policy=policy.default).parsestr(raw)
     body=msg.get_body(preferencelist=("plain","html"))
@@ -257,7 +326,9 @@ def parse_email(raw):
             "dkim":"pass" if re.search(r"dkim\s*=\s*pass",auth,re.I) else "fail_or_unknown",
             "dmarc":"pass" if re.search(r"dmarc\s*=\s*pass",auth,re.I) else "fail_or_unknown"
         },
-        "body":body_text
+        "body":body_text,
+        "html_body": (msg.get_body(preferencelist=("html",)).get_content() if msg.get_body(preferencelist=("html",)) else ""),
+        "attachments": analyze_attachments(msg)
     }
 
 @app.post("/auth/register")
@@ -338,7 +409,9 @@ def analyze_raw_email(request: RawEmailRequest,user: User=Depends(current_user),
     parsed=parse_email(request.raw_email)
     analysis=classify(parsed["body"] or request.raw_email,user.id,db)
     security=analyze_email_security(parsed, parsed["body"] or request.raw_email)
-    return {"headers":{k:v for k,v in parsed.items() if k!="body"},"body_analysis":analysis,"email_security":security}
+    security["html_analysis"]=analyze_html_links(parsed.get("html_body",""))
+    security["attachment_analysis"]=parsed.get("attachments",{"count":0,"attachments":[]})
+    return {"headers":{k:v for k,v in parsed.items() if k not in ("body","html_body","attachments")},"body_analysis":analysis,"email_security":security}
 
 
 # Advanced email-security heuristics
