@@ -185,7 +185,10 @@ def analyze_url_intelligence(url: str):
     signals=[]
     if parsed.scheme.lower() != "https": signals.append({"severity":"medium","type":"insecure_transport","detail":"URL does not use HTTPS"})
     if _is_ip_host(host): signals.append({"severity":"high","type":"ip_host","detail":"URL uses an IPv4 address instead of a domain"})
-    if _is_punycode(host): signals.append({"severity":"high","type":"punycode","detail":"Hostname contains punycode, which can be used in homograph attacks"})\n    signals.extend(_homoglyph_signals(host))\n    domain_info=_domain_intelligence(host)\n    if domain_info.get("signal"): signals.append(domain_info["signal"])
+    if _is_punycode(host): signals.append({"severity":"high","type":"punycode","detail":"Hostname contains punycode, which can be used in homograph attacks"})
+    signals.extend(_homoglyph_signals(host))
+    domain_info=_domain_intelligence(host)
+    if domain_info.get("signal"): signals.append(domain_info["signal"])
     if "@" in url: signals.append({"severity":"high","type":"credential_obfuscation","detail":"URL contains @ before the host boundary"})
     if len(url) > 180: signals.append({"severity":"medium","type":"long_url","detail":"Unusually long URL"})
     query_keys={k.lower() for k in parse_qs(parsed.query).keys()}
