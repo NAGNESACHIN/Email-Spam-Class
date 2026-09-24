@@ -11,6 +11,8 @@ SessionLocal=sessionmaker(bind=engine,autoflush=False,autocommit=False)
 Base=declarative_base()
 SECRET_KEY=os.getenv("JWT_SECRET","change-this-in-production")
 ENVIRONMENT=os.getenv("ENVIRONMENT","development").lower()
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL="postgresql://" + DATABASE_URL[len("postgres://"): ]
 if ENVIRONMENT in {"production","prod"} and SECRET_KEY == "change-this-in-production":
     raise RuntimeError("JWT_SECRET must be set to a strong random value in production.")
 
