@@ -55,3 +55,24 @@ def test_malformed_html_is_safe():
     from backend.main import analyze_html_links
     result = analyze_html_links('<a href="https://example.com"><b>broken')
     assert "mismatches" in result
+
+
+def test_unified_threat_assessment_escalates_phishing_signals():
+    from backend.main import build_unified_threat_assessment
+    result = build_unified_threat_assessment(
+        {"risk_score": 70},
+        {
+            "signals": [{"type": "reply_to_mismatch", "severity": "high", "detail": "Mismatch"}],
+            "html_analysis": {
+                "mismatches": [{"visible_host": "paypal.com", "destination_host": "evil.example"}],
+                "ip_host_count": 0,
+                "punycode_count": 0,
+            },
+            "attachment_analysis": {
+                "attachments": [{"filename": "invoice.exe", "flags": ["dangerous executable/script extension"]}]
+            },
+        },
+    )
+    assert result["risk_level"] == "high"
+    assert result["threat_score"] >= 75
+    assert result["high_signals"] >= 3
