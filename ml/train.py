@@ -6,7 +6,7 @@ import pandas as pd
 import joblib
 import json
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 from sklearn.pipeline import FeatureUnion, Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -125,11 +125,25 @@ def load_email_dataset(path=EMAIL_DATASET):
         raise ValueError("Email dataset must contain both spam and ham labels.")
     return df
 
-def evaluate_email_dataset(path=EMAIL_DATASET):
+def evaluate_email_dataset(path=EMAIL_DATASET, group_column=None):
     df = load_email_dataset(Path(path))
-    X_train, X_test, y_train, y_test = train_test_split(
-        df["text"], df["label"], test_size=0.20, random_state=42, stratify=df["label"]
-    )
+    split_strategy = "stratified_random"
+    if group_column:
+        raw = pd.read_csv(path)
+        if group_column not in raw.columns:
+            raise ValueError(f"Group column not found: {group_column}")
+        groups = raw.loc[df.index, group_column].astype(str).fillna("")
+        if groups.nunique() < 2:
+            raise ValueError("Group column must contain at least two distinct groups.")
+        splitter = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+        train_idx, test_idx = next(splitter.split(df["text"], df["label"], groups))
+        X_train, X_test = df["text"].iloc[train_idx], df["text"].iloc[test_idx]
+        y_train, y_test = df["label"].iloc[train_idx], df["label"].iloc[test_idx]
+        split_strategy = f"stratified_group:{group_column}"
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            df["text"], df["label"], test_size=0.20, random_state=42, stratify=df["label"]
+        )
     candidate = build_model()
     candidate.fit(X_train, y_train)
     predictions = candidate.predict(X_test)
@@ -143,6 +157,7 @@ def evaluate_email_dataset(path=EMAIL_DATASET):
         "test_samples": int(len(X_test)),
         "class_counts": {str(k): int(v) for k,v in df["label"].value_counts().items()},
         "model": "Logistic Regression",
+        "split_strategy": split_strategy,
         "accuracy": round(accuracy_score(y_test,predictions),4),
         "precision": round(precision_score(y_test,predictions,pos_label="spam"),4),
         "recall": round(recall_score(y_test,predictions,pos_label="spam"),4),
@@ -217,11 +232,12 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--email-dataset", type=str, help="CSV with label,text for real-email evaluation")
+    parser.add_argument("--group-column", type=str, help="Optional email campaign/source column used for leakage-safe grouped evaluation")
     parser.add_argument("--spambase", action="store_true", help="Evaluate the UCI Spambase email benchmark")
     args = parser.parse_args()
     if args.spambase:
         evaluate_spambase()
     elif args.email_dataset:
-        evaluate_email_dataset(args.email_dataset)
+        evaluate_email_dataset(args.email_dataset, args.group_column)
     else:
         main()
