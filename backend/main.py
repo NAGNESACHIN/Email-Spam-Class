@@ -488,7 +488,9 @@ def detect_lookalike_domains(domain):
     return findings
 
 def build_unified_threat_assessment(ml_result, security):
-    signals=list(security.get("signals",[]))\n    sender_domain=security.get("sender_domain")\n    domain_intelligence=_domain_intelligence(sender_domain)
+    signals=list(security.get("signals",[]))
+    sender_domain=security.get("sender_domain")
+    domain_intelligence=_domain_intelligence(sender_domain)
     html=security.get("html_analysis") or {}
     attachments=security.get("attachment_analysis") or {}
 
