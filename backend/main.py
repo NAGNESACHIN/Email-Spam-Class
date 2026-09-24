@@ -527,7 +527,7 @@ def build_unified_threat_assessment(ml_result, security):
     high=sum(1 for item in normalized if item.get("severity")=="high")
     medium=sum(1 for item in normalized if item.get("severity")=="medium")
     ml_score=float(ml_result.get("risk_score",0))
-    heuristic_score=min(100,high*18+medium*8)
+    heuristic_score=min(100,high*28+medium*12)
     threat_score=min(100,round(ml_score*0.55+heuristic_score*0.45))
 
     if threat_score >= 75:
