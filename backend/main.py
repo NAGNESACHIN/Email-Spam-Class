@@ -48,6 +48,8 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Cache-Control"] = "no-store"
+    if ENVIRONMENT in {"production","prod"}:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 
