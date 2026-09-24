@@ -102,6 +102,26 @@ def _is_ip_host(host: str):
 def _is_punycode(host: str):
     return any(label.startswith("xn--") for label in host.split("."))
 
+DISPOSABLE_EMAIL_DOMAINS = {"mailinator.com","10minutemail.com","guerrillamail.com","tempmail.com","yopmail.com","trashmail.com","getnada.com","sharklasers.com"}
+
+def _is_disposable_domain(host: str):
+    return (host or "").lower().strip(".") in DISPOSABLE_EMAIL_DOMAINS
+
+def _homoglyph_signals(host: str):
+    suspicious_chars=set("аｅіоѕԁɡһјӏոрԛсԝу")
+    if any(ch in (host or "").lower() for ch in suspicious_chars):
+        return [{"severity":"high","type":"unicode_homoglyph","detail":"Hostname contains Unicode characters commonly used in lookalike domains."}]
+    return []
+
+def _domain_intelligence(host: str):
+    host=(host or "").lower().strip(".")
+    if not host:
+        return {"status":"invalid"}
+    result={"status":"heuristic","hostname":host,"is_disposable":_is_disposable_domain(host),"is_free_email":host in FREE_EMAIL_DOMAINS}
+    if result["is_disposable"]:
+        result["signal"]={"severity":"medium","type":"disposable_domain","detail":"Domain is in the configured disposable-email domain list."}
+    return result
+
 def _domain_age_signal(host: str):
     return {"status": "not_checked", "reason": "Live domain intelligence provider not configured"}
 
@@ -165,13 +185,13 @@ def analyze_url_intelligence(url: str):
     signals=[]
     if parsed.scheme.lower() != "https": signals.append({"severity":"medium","type":"insecure_transport","detail":"URL does not use HTTPS"})
     if _is_ip_host(host): signals.append({"severity":"high","type":"ip_host","detail":"URL uses an IPv4 address instead of a domain"})
-    if _is_punycode(host): signals.append({"severity":"high","type":"punycode","detail":"Hostname contains punycode, which can be used in homograph attacks"})
+    if _is_punycode(host): signals.append({"severity":"high","type":"punycode","detail":"Hostname contains punycode, which can be used in homograph attacks"})\n    signals.extend(_homoglyph_signals(host))\n    domain_info=_domain_intelligence(host)\n    if domain_info.get("signal"): signals.append(domain_info["signal"])
     if "@" in url: signals.append({"severity":"high","type":"credential_obfuscation","detail":"URL contains @ before the host boundary"})
     if len(url) > 180: signals.append({"severity":"medium","type":"long_url","detail":"Unusually long URL"})
     query_keys={k.lower() for k in parse_qs(parsed.query).keys()}
     if query_keys & {"token","password","passwd","otp","session"}: signals.append({"severity":"medium","type":"sensitive_query","detail":"Sensitive credential/session parameter present"})
     score=min(100,sum(28 if s["severity"]=="high" else 12 for s in signals))
-    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":_domain_age_signal(host),"reputation": virustotal_url_lookup(url)}
+    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":{**_domain_age_signal(host), **_domain_intelligence(host)},"reputation": virustotal_url_lookup(url)}
 
 def analyze_url(url):
     raw=url.strip()
