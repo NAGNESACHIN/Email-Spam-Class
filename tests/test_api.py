@@ -31,3 +31,27 @@ def test_validation_rejects_empty_prediction():
 def test_url_validation_rejects_empty_url():
     response = client.post("/analyze/url", json={"url": ""})
     assert response.status_code == 422
+
+def test_html_link_mismatch():
+    from backend.main import analyze_html_links
+    result = analyze_html_links('<a href="https://evil.example/login">https://paypal.com/login</a>')
+    assert len(result["mismatches"]) == 1
+    assert result["mismatches"][0]["destination_host"] == "evil.example"
+
+def test_html_benign_link():
+    from backend.main import analyze_html_links
+    result = analyze_html_links('<a href="https://example.com/help">https://example.com/help</a>')
+    assert result["mismatches"] == []
+
+def test_attachment_risk_metadata():
+    from email.parser import Parser
+    from backend.main import analyze_attachments
+    msg = Parser().parsestr('Content-Type: multipart/mixed; boundary="x"\n\n--x\nContent-Disposition: attachment; filename="invoice.exe"\nContent-Type: application/octet-stream\n\nMZ\n--x--')
+    result = analyze_attachments(msg)
+    assert result["count"] == 1
+    assert any(s["type"] == "executable_attachment" for s in result["attachments"][0]["signals"])
+
+def test_malformed_html_is_safe():
+    from backend.main import analyze_html_links
+    result = analyze_html_links('<a href="https://example.com"><b>broken')
+    assert "mismatches" in result
