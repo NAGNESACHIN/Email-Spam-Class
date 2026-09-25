@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 import time
 import base64
 import urllib.request
+from urllib.error import HTTPError, URLError
 from fastapi.responses import JSONResponse
 import joblib
 from fastapi import FastAPI, HTTPException, Depends, Request
@@ -21,7 +22,7 @@ from .auth import User, Scan, get_db, current_user, make_token, hash_password, v
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.6.0")
+app = FastAPI(title="MailGuard AI API", version="3.7.0")
 _RATE_WINDOW_SECONDS=60
 _RATE_LIMIT=60
 _rate_hits=defaultdict(deque)
@@ -123,13 +124,59 @@ def _domain_intelligence(host: str):
     host=(host or "").lower().strip(".")
     if not host:
         return {"status":"invalid"}
-    result={"status":"heuristic","hostname":host,"is_disposable":_is_disposable_domain(host),"is_free_email":host in FREE_EMAIL_DOMAINS}
+    result={"status":"heuristic","hostname":host,"is_disposable":_is_disposable_domain(host),"is_free_email":host in FREE_EMAIL_DOMAINS,"registration":_domain_age_signal(host)}
     if result["is_disposable"]:
         result["signal"]={"severity":"medium","type":"disposable_domain","detail":"Domain is in the configured disposable-email domain list."}
     return result
 
 def _domain_age_signal(host: str):
-    return {"status": "not_checked", "reason": "Live domain intelligence provider not configured"}
+    """Fetch public registration metadata through RDAP when enabled.
+
+    RDAP is used instead of WHOIS because it is the standardized registration
+    data protocol for gTLDs. The lookup is opt-in and failures never block
+    email analysis.
+    """
+    host=(host or "").lower().strip(".")
+    if not host or _is_ip_host(host) or _is_punycode(host):
+        return {"status":"not_checked","reason":"Domain is not eligible for the RDAP lookup."}
+    if os.getenv("RDAP_LOOKUP_ENABLED","true").lower() not in {"1","true","yes","on"}:
+        return {"status":"disabled"}
+    try:
+        request=urllib.request.Request(
+            f"https://rdap.org/domain/{host}",
+            headers={"Accept":"application/rdap+json","User-Agent":"MailGuard-AI/3.6"},
+            method="GET",
+        )
+        with urllib.request.urlopen(request,timeout=4) as response:
+            data=json.loads(response.read().decode("utf-8"))
+        events=data.get("events",[])
+        created=None
+        updated=None
+        for event in events:
+            action=str(event.get("eventAction","")).lower()
+            date=event.get("eventDate")
+            if action=="registration" and date: created=date
+            elif action=="last changed" and date: updated=date
+        result={"status":"available","domain":data.get("ldhName") or host,
+                "registrar":None,"created":created,"last_changed":updated}
+        entities=data.get("entities",[])
+        for entity in entities:
+            if "registrar" in entity.get("roles",[]):
+                result["registrar"]=(entity.get("vcardArray") or [None,[]])[1]
+                break
+        if created:
+            try:
+                created_dt=datetime.fromisoformat(created.replace("Z","+00:00"))
+                age_days=max(0,(datetime.now(timezone.utc)-created_dt).days)
+                result["age_days"]=age_days
+                result["age_signal"]="new_domain" if age_days < 30 else ("recent_domain" if age_days < 180 else "established_domain")
+            except Exception:
+                pass
+        return result
+    except (HTTPError,URLError,TimeoutError,ValueError,json.JSONDecodeError):
+        return {"status":"unavailable"}
+    except Exception:
+        return {"status":"unavailable"}
 
 def _virustotal_url_lookup(url: str):
     api_key = os.getenv("VIRUSTOTAL_API_KEY")
