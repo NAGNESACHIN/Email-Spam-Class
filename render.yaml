@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: mailguard-ai-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.backend
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://frontend-two-alpha-51.vercel.app
+      - key: VIRUSTOTAL_API_KEY
+        sync: false
+      - key: RDAP_LOOKUP_ENABLED
+        value: "true"
+      - key: AUTH_RATE_WINDOW_SECONDS
+        value: "300"
+      - key: AUTH_RATE_LIMIT
+        value: "10"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "10"
