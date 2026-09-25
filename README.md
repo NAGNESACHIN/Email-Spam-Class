@@ -207,3 +207,10 @@ Frontend build variable:
 - VITE_API_URL=<public backend API URL>
 
 Run pytest and the frontend production build before deployment. Never commit production secrets or .env files.
+
+
+### Domain intelligence
+
+MailGuard can optionally enrich sender domains with public RDAP registration metadata, including registration date and domain-age signals. RDAP is the standardized replacement for WHOIS for gTLD registration data. Set `RDAP_LOOKUP_ENABLED=false` to disable live lookups.
+
+For production deployments, configure PostgreSQL with `DATABASE_URL`, a strong `JWT_SECRET`, explicit `CORS_ORIGINS`, and appropriate database pool settings.
