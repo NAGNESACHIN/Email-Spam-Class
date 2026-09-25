@@ -43,5 +43,5 @@ export default function App(){
  {analysis.explanation?.length>0&&<div className="signals explanation"><h3>Why the model decided this</h3><div className="evidence">{analysis.explanation.map((x,i)=><div className="evidence-item" key={i}><span>{x.impact>=0?"+":"−"}</span><b>{x.term}</b><small>{x.impact>=0?"toward spam":"away from spam"}</small></div>)}</div></div>}
  {analysis.url_analysis?.suspicious_urls?.length>0&&<div className="signals urls"><h3>Suspicious URLs</h3>{analysis.url_analysis.suspicious_urls.map((u,i)=><div className="signal" key={i}><span>↗</span><div><b>{u.url}</b><small>{u.reasons.join(" · ")}</small></div></div>)}</div>}
  </>}</div></section>}
- <footer>MailGuard AI · Explainable NLP email security · v3.5</footer></main>
+ <footer>MailGuard AI · Explainable NLP email security · v3.6</footer></main>
 }
