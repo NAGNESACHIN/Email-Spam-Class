@@ -21,7 +21,7 @@ from .auth import User, Scan, get_db, current_user, make_token, hash_password, v
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.4.0")
+app = FastAPI(title="MailGuard AI API", version="3.5.0")
 _RATE_WINDOW_SECONDS=60
 _RATE_LIMIT=60
 _rate_hits=defaultdict(deque)
@@ -196,8 +196,14 @@ def analyze_url_intelligence(url: str):
     if len(url) > 180: signals.append({"severity":"medium","type":"long_url","detail":"Unusually long URL"})
     query_keys={k.lower() for k in parse_qs(parsed.query).keys()}
     if query_keys & {"token","password","passwd","otp","session"}: signals.append({"severity":"medium","type":"sensitive_query","detail":"Sensitive credential/session parameter present"})
+    reputation=virustotal_url_lookup(url)
+    if reputation.get("status") == "available":
+        if reputation.get("malicious", 0) > 0:
+            signals.append({"severity":"high","type":"external_reputation","detail":f"VirusTotal reports {reputation['malicious']} malicious engine result(s)."})
+        elif reputation.get("suspicious", 0) > 0:
+            signals.append({"severity":"medium","type":"external_reputation","detail":f"VirusTotal reports {reputation['suspicious']} suspicious engine result(s)."})
     score=min(100,sum(28 if s["severity"]=="high" else 12 for s in signals))
-    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":{**_domain_age_signal(host), **_domain_intelligence(host)},"reputation": virustotal_url_lookup(url)}
+    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":{**_domain_age_signal(host), **_domain_intelligence(host)},"reputation":reputation}
 
 def analyze_url(url):
     raw=url.strip()
@@ -311,7 +317,10 @@ def analyze_html_links(html):
             mismatches.append({"text":text,"href":href,"visible_host":visible_host,"destination_host":destination})
         if "@" in href or _is_ip_host(destination) or _is_punycode(destination):
             suspicious.append({"text":text,"href":href,"destination_host":destination})
-    return {"link_count":len(parser.links),"mismatches":mismatches,"suspicious_links":suspicious,"parse_error":False}
+    ip_host_count=sum(1 for item in suspicious if _is_ip_host(item.get("destination_host","")))
+    punycode_count=sum(1 for item in suspicious if _is_punycode(item.get("destination_host","")))
+    return {"link_count":len(parser.links),"mismatches":mismatches,"suspicious_links":suspicious,
+            "ip_host_count":ip_host_count,"punycode_count":punycode_count,"parse_error":False}
 
 DANGEROUS_ATTACHMENT_EXTENSIONS={"exe","scr","bat","cmd","com","js","jse","vbs","vbe","wsf","wsh","msi","jar","hta","ps1","dll","iso","img"}
 MACRO_ATTACHMENT_EXTENSIONS={"docm","xlsm","pptm","xlam","dotm","xltm"}
@@ -335,7 +344,9 @@ def analyze_attachments(msg):
             signals.append({"severity":"medium","type":"archive_attachment","detail":"Archive or disk-image attachment can conceal nested payloads."})
         if size > 10*1024*1024:
             signals.append({"severity":"medium","type":"oversized_attachment","detail":"Attachment exceeds 10 MB."})
-        attachments.append({"filename":filename,"content_type":part.get_content_type(),"extension":extension,"size_bytes":size,"signals":signals})
+        flags=[item["detail"] for item in signals]
+        attachments.append({"filename":filename,"content_type":part.get_content_type(),"extension":extension,
+                            "size_bytes":size,"signals":signals,"flags":flags})
     return {"count":len(attachments),"attachments":attachments}
 
 def parse_email(raw):
