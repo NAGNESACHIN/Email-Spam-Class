@@ -13,8 +13,8 @@ An explainable NLP-based email spam classification system using TF-IDF, Logistic
 - REST API with FastAPI
 - UCI SMS Spam Collection dataset
 - Clean separation between ML training and API serving
-- Raw `.eml` header and authentication analysis
-- URL risk intelligence and lookalike-domain detection
+- Raw `.eml` header, authentication, HTML link, and attachment analysis
+- URL risk intelligence, optional VirusTotal reputation, and lookalike-domain detection
 - Unified 0–100 email threat score
 - User authentication and personal scan history
 - Batch CSV scanning
@@ -152,7 +152,8 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] Unified phishing threat score
 - [x] Email benchmark evaluation tooling (UCI Spambase + custom labeled-email CSV)
 - [ ] Representative real-world labeled email dataset evaluation
-- [x] Optional production threat-intelligence provider integration
+- [x] HTML phishing link mismatch and attachment-risk analysis
+- [x] Optional VirusTotal URL reputation integration
 - [x] Automated API/frontend test suite
 - [ ] Production deployment
 
