@@ -21,12 +21,12 @@ from .auth import User, Scan, get_db, current_user, make_token, hash_password, v
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.5.0")
+app = FastAPI(title="MailGuard AI API", version="3.6.0")
 _RATE_WINDOW_SECONDS=60
 _RATE_LIMIT=60
 _rate_hits=defaultdict(deque)
-_AUTH_RATE_WINDOW_SECONDS=300
-_AUTH_RATE_LIMIT=10
+_AUTH_RATE_WINDOW_SECONDS=int(os.getenv("AUTH_RATE_WINDOW_SECONDS","300"))
+_AUTH_RATE_LIMIT=int(os.getenv("AUTH_RATE_LIMIT","10"))
 _auth_hits=defaultdict(deque)
 
 def _rate_limit(request: Request):
@@ -38,7 +38,10 @@ def _rate_limit(request: Request):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):
     return JSONResponse(status_code=500, content={"detail":"Internal server error."})
-ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ORIGINS","http://localhost:5173").split(",") if x.strip()]
+_cors_default="http://localhost:5173"
+ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ORIGINS",_cors_default).split(",") if x.strip()]
+if ENVIRONMENT in {"production","prod"} and (not ALLOWED_ORIGINS or any(x=="*" for x in ALLOWED_ORIGINS)):
+    raise RuntimeError("Production CORS_ORIGINS must explicitly list trusted frontend origins.")
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.middleware("http")
@@ -371,19 +374,23 @@ def parse_email(raw):
         "attachments": analyze_attachments(msg)
     }
 
-def _auth_rate_limit(request: Request):
+def _auth_rate_limit(request: Request, email: str):
     now=time.monotonic()
-    key=request.client.host if request.client else "unknown"
-    hits=_auth_hits[key]
-    while hits and now-hits[0] > _AUTH_RATE_WINDOW_SECONDS:
-        hits.popleft()
-    if len(hits) >= _AUTH_RATE_LIMIT:
-        raise HTTPException(429,"Too many authentication attempts. Please try again later.")
-    hits.append(now)
+    ip=request.client.host if request.client else "unknown"
+    normalized=email.strip().lower()
+    keys=(f"ip:{ip}",f"email:{normalized}")
+    for key in keys:
+        hits=_auth_hits[key]
+        while hits and now-hits[0] > _AUTH_RATE_WINDOW_SECONDS:
+            hits.popleft()
+        if len(hits) >= _AUTH_RATE_LIMIT:
+            raise HTTPException(429,"Too many authentication attempts. Please try again later.")
+    for key in keys:
+        _auth_hits[key].append(now)
 
 @app.post("/auth/register")
 def register(request: AuthRequest, db=Depends(get_db)):
-    _auth_rate_limit(request)
+    _auth_rate_limit(request, request.email)
     email=request.email.strip().lower()
     if not valid_email(email): raise HTTPException(400,"Enter a valid email.")
     if len(request.password)<8: raise HTTPException(400,"Password must be at least 8 characters.")
