@@ -1,7 +1,10 @@
 from pathlib import Path
 import io
 import zipfile
+import tarfile
 import urllib.request
+from email import policy
+from email.parser import BytesParser
 import pandas as pd
 import joblib
 import json
@@ -106,6 +109,92 @@ def evaluate_spambase():
       'recall':round(recall_score(y_test,pred),4),'f1':round(f1_score(y_test,pred),4),'roc_auc':round(roc_auc_score(y_test,prob),4),
       'true_negative':int(tn),'false_positive':int(fp),'false_negative':int(fn),'true_positive':int(tp)}
     (MODEL_DIR/'spambase_evaluation_report.json').write_text(json.dumps(report,indent=2)); print(json.dumps(report,indent=2)); return report
+SPAMASSASSIN_DIR = DATA_DIR / "spamassassin_corpus"
+SPAMASSASSIN_URLS = {
+    "easy_ham": "https://spamassassin.apache.org/old/publiccorpus/20030228_easy_ham.tar.bz2",
+    "hard_ham": "https://spamassassin.apache.org/old/publiccorpus/20030228_hard_ham.tar.bz2",
+    "spam": "https://spamassassin.apache.org/old/publiccorpus/20030228_spam.tar.bz2",
+}
+
+def _extract_mail_text(raw: bytes):
+    msg=BytesParser(policy=policy.default).parsebytes(raw)
+    parts=[]
+    if msg.get("Subject"):
+        parts.append("Subject: "+str(msg.get("Subject")))
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type()=="text/plain":
+                try:
+                    parts.append(part.get_content())
+                except Exception:
+                    pass
+    else:
+        try:
+            parts.append(msg.get_content())
+        except Exception:
+            pass
+    return "\n".join(x for x in parts if x).strip()
+
+def download_spamassassin_corpus():
+    SPAMASSASSIN_DIR.mkdir(exist_ok=True)
+    for label,url in SPAMASSASSIN_URLS.items():
+        archive=SPAMASSASSIN_DIR/f"{label}.tar.bz2"
+        target=SPAMASSASSIN_DIR/label
+        if target.exists() and any(target.rglob("*")):
+            continue
+        print(f"Downloading SpamAssassin {label}...")
+        urllib.request.urlretrieve(url, archive)
+        target.mkdir(exist_ok=True)
+        with tarfile.open(archive,"r:bz2") as tar:
+            tar.extractall(target, filter="data")
+
+def evaluate_spamassassin():
+    download_spamassassin_corpus()
+    rows=[]
+    for label in ("easy_ham","hard_ham","spam"):
+        normalized="spam" if label=="spam" else "ham"
+        for path in (SPAMASSASSIN_DIR/label).rglob("*"):
+            if path.is_file() and not path.name.startswith("."):
+                try:
+                    text=_extract_mail_text(path.read_bytes())
+                    if text:
+                        rows.append({"label":normalized,"text":text,"source":label})
+                except Exception:
+                    continue
+    df=pd.DataFrame(rows).drop_duplicates(subset=["text"])
+    if df["label"].nunique()<2:
+        raise ValueError("SpamAssassin corpus did not contain both classes.")
+    X_train,X_test,y_train,y_test=train_test_split(
+        df["text"],df["label"],test_size=0.20,random_state=42,stratify=df["label"]
+    )
+    candidate=build_model()
+    candidate.fit(X_train,y_train)
+    predictions=candidate.predict(X_test)
+    probabilities=candidate.predict_proba(X_test)[:,list(candidate.classes_).index("spam")]
+    spam_true=(y_test=="spam").astype(int)
+    tn,fp,fn,tp=confusion_matrix(y_test,predictions,labels=["ham","spam"]).ravel()
+    report={
+        "dataset":"Apache SpamAssassin Public Corpus (20030228)",
+        "samples":int(len(df)),
+        "train_samples":int(len(X_train)),
+        "test_samples":int(len(X_test)),
+        "class_counts":{str(k):int(v) for k,v in df["label"].value_counts().items()},
+        "model":"Logistic Regression",
+        "split_strategy":"stratified_random",
+        "accuracy":round(accuracy_score(y_test,predictions),4),
+        "precision":round(precision_score(y_test,predictions,pos_label="spam"),4),
+        "recall":round(recall_score(y_test,predictions,pos_label="spam"),4),
+        "f1":round(f1_score(y_test,predictions,pos_label="spam"),4),
+        "roc_auc":round(roc_auc_score(spam_true,probabilities),4),
+        "true_negative":int(tn),"false_positive":int(fp),
+        "false_negative":int(fn),"true_positive":int(tp),
+        "false_positive_rate":round(fp/(fp+tn),4) if fp+tn else 0,
+        "false_negative_rate":round(fn/(fn+tp),4) if fn+tp else 0
+    }
+    (MODEL_DIR/"spamassassin_evaluation_report.json").write_text(json.dumps(report,indent=2))
+    print(json.dumps(report,indent=2))
+    return report
+
 def load_email_dataset(path=EMAIL_DATASET):
     if not path.exists():
         raise FileNotFoundError(
@@ -234,8 +323,11 @@ if __name__ == "__main__":
     parser.add_argument("--email-dataset", type=str, help="CSV with label,text for real-email evaluation")
     parser.add_argument("--group-column", type=str, help="Optional email campaign/source column used for leakage-safe grouped evaluation")
     parser.add_argument("--spambase", action="store_true", help="Evaluate the UCI Spambase email benchmark")
+    parser.add_argument("--spamassassin", action="store_true", help="Evaluate the Apache SpamAssassin raw-email corpus")
     args = parser.parse_args()
-    if args.spambase:
+    if args.spamassassin:
+        evaluate_spamassassin()
+    elif args.spambase:
         evaluate_spambase()
     elif args.email_dataset:
         evaluate_email_dataset(args.email_dataset, args.group_column)
