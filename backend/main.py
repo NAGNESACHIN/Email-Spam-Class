@@ -442,6 +442,7 @@ def evaluation_reports():
     for key, filename in {
         "sms_benchmark":"comparison_metrics.json",
         "spambase":"spambase_evaluation_report.json",
+        "spamassassin":"spamassassin_evaluation_report.json",
         "custom_email":"email_evaluation_report.json"
     }.items():
         path=MODEL_PATH.parent / filename
