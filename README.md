@@ -151,7 +151,8 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] Docker deployment configuration
 - [x] Unified phishing threat score
 - [x] Email benchmark evaluation tooling (UCI Spambase + custom labeled-email CSV)
-- [ ] Representative real-world labeled email dataset evaluation
+- [x] Raw-email benchmark evaluation with Apache SpamAssassin Public Corpus
+- [ ] Representative current real-world labeled email dataset evaluation
 - [x] HTML phishing link mismatch and attachment-risk analysis
 - [x] Optional VirusTotal URL reputation integration
 - [x] Automated API/frontend test suite
