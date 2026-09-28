@@ -28,6 +28,7 @@ Set these secret values in Render:
 - `DATABASE_URL` = your Neon PostgreSQL connection string
 - `JWT_SECRET` = a unique random secret of at least 32 characters
 - `VIRUSTOTAL_API_KEY` = optional
+- `REDIS_URL` = optional shared Redis URL for multi-instance rate limiting
 
 Authentication sessions are issued as HttpOnly, Secure, SameSite cookies in production. Do not expose JWT values to the frontend or store them in browser storage.
 
@@ -123,6 +124,7 @@ MailGuard bootstraps the current schema with SQLAlchemy metadata. Alembic is now
 ## 7. Performance and production notes
 
 - Batch prediction writes are committed as one database transaction rather than once per message.
+- If `REDIS_URL` is configured, API/auth throttling is shared across backend instances; otherwise the service uses an in-process limiter.
 - Analytics uses SQL aggregation and only fetches the latest 20 scans.
 - CSV imports accept quoted/multiline RFC-style fields and support common message column names.
 - Docker uses a separate model-builder stage so the runtime image does not contain the ML training toolchain.
