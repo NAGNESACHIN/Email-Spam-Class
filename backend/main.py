@@ -1,10 +1,12 @@
 from pathlib import Path
 import os
 import re
+import hashlib
+import secrets
 from email import policy
 from email.parser import Parser
 from html.parser import HTMLParser
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 import json
 from datetime import datetime, timezone
 from collections import defaultdict, deque
@@ -12,12 +14,12 @@ import time
 import base64
 import urllib.request
 from urllib.error import HTTPError, URLError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 import joblib
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from .auth import User, Scan, get_db, current_user, make_token, hash_password, verify_password, valid_email
+from .auth import User, Scan, OAuthIdentity, OAuthState, OAuthCode, get_db, current_user, make_token, hash_password, verify_password, valid_email
 
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
@@ -442,6 +444,209 @@ def _auth_rate_limit(request: Request, email: str):
             raise HTTPException(429,"Too many authentication attempts. Please try again later.")
     for key in keys:
         _auth_hits[key].append(now)
+
+# --- OAuth / SSO ---------------------------------------------------------
+OAUTH_FRONTEND_URL=os.getenv("FRONTEND_URL","https://email-spam-class.vercel.app").rstrip("/")
+
+def _oauth_config(provider):
+    provider=provider.lower()
+    configs={
+        "google":{
+            "client_id":os.getenv("GOOGLE_CLIENT_ID","").strip(),
+            "client_secret":os.getenv("GOOGLE_CLIENT_SECRET","").strip(),
+            "redirect_uri":os.getenv("GOOGLE_REDIRECT_URI","https://mailguard-ai-api.onrender.com/auth/google/callback").strip(),
+            "authorize":"https://accounts.google.com/o/oauth2/v2/auth",
+            "token":"https://oauth2.googleapis.com/token",
+            "userinfo":"https://openidconnect.googleapis.com/v1/userinfo",
+            "scope":"openid email profile",
+        },
+        "yahoo":{
+            "client_id":os.getenv("YAHOO_CLIENT_ID","").strip(),
+            "client_secret":os.getenv("YAHOO_CLIENT_SECRET","").strip(),
+            "redirect_uri":os.getenv("YAHOO_REDIRECT_URI","https://mailguard-ai-api.onrender.com/auth/yahoo/callback").strip(),
+            "authorize":"https://api.login.yahoo.com/oauth2/request_auth",
+            "token":"https://api.login.yahoo.com/oauth2/get_token",
+            "userinfo":"https://api.login.yahoo.com/openid/v1/userinfo",
+            "scope":"openid email profile",
+        },
+        "microsoft":{
+            "client_id":os.getenv("MICROSOFT_CLIENT_ID","").strip(),
+            "client_secret":os.getenv("MICROSOFT_CLIENT_SECRET","").strip(),
+            "tenant":os.getenv("MICROSOFT_TENANT","common").strip() or "common",
+            "redirect_uri":os.getenv("MICROSOFT_REDIRECT_URI","https://mailguard-ai-api.onrender.com/auth/microsoft/callback").strip(),
+            "authorize":None,
+            "token":None,
+            "userinfo":"https://graph.microsoft.com/oidc/userinfo",
+            "scope":"openid profile email",
+        }
+    }
+    return configs.get(provider)
+
+def _sha256(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+def _oauth_now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def _oauth_enabled(provider):
+    cfg=_oauth_config(provider)
+    return bool(cfg and cfg.get("client_id") and cfg.get("client_secret"))
+
+def _oauth_redirect_error(provider, message):
+    params=urlencode({"oauth_error":message,"provider":provider})
+    return RedirectResponse(f"{OAUTH_FRONTEND_URL}?{params}", status_code=302)
+
+def _oauth_userinfo(provider, access_token, cfg):
+    request=urllib.request.Request(
+        cfg["userinfo"],
+        headers={"Authorization":f"Bearer {access_token}","Accept":"application/json"},
+        method="GET"
+    )
+    with urllib.request.urlopen(request,timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def _oauth_token_exchange(provider, code, cfg):
+    if provider=="microsoft":
+        cfg=dict(cfg)
+        cfg["authorize"]=f"https://login.microsoftonline.com/{cfg['tenant']}/oauth2/v2.0/authorize"
+        cfg["token"]=f"https://login.microsoftonline.com/{cfg['tenant']}/oauth2/v2.0/token"
+    payload=urlencode({
+        "code":code,
+        "client_id":cfg["client_id"],
+        "client_secret":cfg["client_secret"],
+        "redirect_uri":cfg["redirect_uri"],
+        "grant_type":"authorization_code",
+    }).encode("utf-8")
+    request=urllib.request.Request(
+        cfg["token"],data=payload,
+        headers={"Content-Type":"application/x-www-form-urlencoded","Accept":"application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(request,timeout=10) as response:
+        data=json.loads(response.read().decode("utf-8"))
+    access_token=data.get("access_token")
+    if not access_token:
+        raise ValueError("OAuth provider did not return an access token.")
+    return data
+
+def _oauth_start(provider, db):
+    provider=provider.lower()
+    cfg=_oauth_config(provider)
+    if not cfg:
+        raise HTTPException(404,"Unsupported sign-in provider.")
+    if not _oauth_enabled(provider):
+        return _oauth_redirect_error(provider,"provider_not_configured")
+    if provider=="microsoft":
+        cfg=dict(cfg)
+        cfg["authorize"]=f"https://login.microsoftonline.com/{cfg['tenant']}/oauth2/v2.0/authorize"
+    state=secrets.token_urlsafe(32)
+    state_row=OAuthState(
+        provider=provider,
+        state_hash=_sha256(state),
+        expires_at=_oauth_now()+_oauth_now()+__import__("datetime").timedelta(minutes=10),
+    )
+    db.add(state_row)
+    db.commit()
+    params={
+        "client_id":cfg["client_id"],
+        "redirect_uri":cfg["redirect_uri"],
+        "response_type":"code",
+        "scope":cfg["scope"],
+        "state":state,
+    }
+    if provider=="google":
+        params["access_type"]="online"
+        params["prompt"]="select_account"
+    if provider=="yahoo":
+        params["nonce"]=secrets.token_urlsafe(24)
+    if provider=="microsoft":
+        params["response_mode"]="query"
+        params["prompt"]="select_account"
+    return RedirectResponse(cfg["authorize"]+"?"+urlencode(params),status_code=302)
+
+def _oauth_complete(provider, code, state, db):
+    cfg=_oauth_config(provider)
+    if not cfg or not _oauth_enabled(provider):
+        return _oauth_redirect_error(provider,"provider_not_configured")
+    state_row=db.query(OAuthState).filter(
+        OAuthState.provider==provider,
+        OAuthState.state_hash==_sha256(state)
+    ).first()
+    if not state_row or state_row.expires_at < _oauth_now():
+        if state_row:
+            db.delete(state_row); db.commit()
+        return _oauth_redirect_error(provider,"invalid_or_expired_state")
+    db.delete(state_row)
+    db.commit()
+
+    try:
+        token_data=_oauth_token_exchange(provider,code,cfg)
+        info=_oauth_userinfo(provider,token_data["access_token"],cfg)
+    except (HTTPError,URLError,ValueError,json.JSONDecodeError):
+        return _oauth_redirect_error(provider,"provider_authentication_failed")
+
+    email=str(info.get("email") or info.get("preferred_username") or "").strip().lower()
+    subject=str(info.get("sub") or "").strip()
+    if not email or not subject or not valid_email(email):
+        return _oauth_redirect_error(provider,"provider_did_not_return_a_valid_email")
+
+    identity=db.query(OAuthIdentity).filter(
+        OAuthIdentity.provider==provider,
+        OAuthIdentity.subject==subject
+    ).first()
+
+    if identity:
+        user=db.get(User,identity.user_id)
+        if not user:
+            return _oauth_redirect_error(provider,"linked_account_not_found")
+    else:
+        user=db.query(User).filter(User.email==email).first()
+        if not user:
+            user=User(email=email,password_hash=hash_password(secrets.token_urlsafe(32)))
+            db.add(user); db.commit(); db.refresh(user)
+        identity=OAuthIdentity(provider=provider,subject=subject,email=email,user_id=user.id)
+        db.add(identity); db.commit()
+
+    one_time=secrets.token_urlsafe(32)
+    db.add(OAuthCode(
+        code_hash=_sha256(one_time),
+        user_id=user.id,
+        expires_at=_oauth_now()+__import__("datetime").timedelta(minutes=2),
+    ))
+    db.commit()
+    params=urlencode({"oauth_code":one_time,"provider":provider})
+    return RedirectResponse(f"{OAUTH_FRONTEND_URL}?{params}",status_code=302)
+
+@app.get("/auth/{provider}/start")
+def oauth_start(provider: str, db=Depends(get_db)):
+    return _oauth_start(provider,db)
+
+@app.get("/auth/{provider}/callback")
+def oauth_callback(provider: str, request: Request, db=Depends(get_db)):
+    provider=provider.lower()
+    error=request.query_params.get("error")
+    if error:
+        return _oauth_redirect_error(provider,error)
+    code=request.query_params.get("code","")
+    state=request.query_params.get("state","")
+    if not code or not state:
+        return _oauth_redirect_error(provider,"missing_oauth_response")
+    return _oauth_complete(provider,code,state,db)
+
+class OAuthExchangeRequest(BaseModel):
+    code: str = Field(..., min_length=20, max_length=256)
+
+@app.post("/auth/oauth/exchange")
+def oauth_exchange(request: OAuthExchangeRequest, db=Depends(get_db)):
+    row=db.query(OAuthCode).filter(OAuthCode.code_hash==_sha256(request.code),OAuthCode.consumed_at==None).first()
+    if not row or row.expires_at < _oauth_now():
+        raise HTTPException(401,"OAuth session is invalid or expired.")
+    row.consumed_at=_oauth_now()
+    db.commit()
+    user=db.get(User,row.user_id)
+    if not user:
+        raise HTTPException(401,"Account not found.")
+    return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
 
 @app.post("/auth/register")
 def register(request: AuthRequest, http_request: Request, db=Depends(get_db)):
