@@ -25,7 +25,7 @@ from .auth import User, Scan, OAuthIdentity, OAuthState, OAuthCode, SESSION_COOK
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
-app = FastAPI(title="MailGuard AI API", version="3.7.0")
+app = FastAPI(title="MailGuard AI API", version="4.0.0")
 _RATE_WINDOW_SECONDS=60
 _RATE_LIMIT=60
 _rate_hits=defaultdict(deque)
@@ -228,7 +228,7 @@ def _domain_age_signal(host: str):
     try:
         request=urllib.request.Request(
             f"https://rdap.org/domain/{host}",
-            headers={"Accept":"application/rdap+json","User-Agent":"MailGuard-AI/3.6"},
+            headers={"Accept":"application/rdap+json","User-Agent":"MailGuard-AI/4.0"},
             method="GET",
         )
         with urllib.request.urlopen(request,timeout=4) as response:
