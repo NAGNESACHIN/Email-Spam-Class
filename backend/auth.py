@@ -85,7 +85,8 @@ def _initialize_database():
                 raise
             time.sleep(min(2 ** attempt, 8))
 
-_initialize_database()
+if os.getenv("ALEMBIC_RUNNING") != "1":
+    _initialize_database()
 
 def get_db():
     db=SessionLocal()
