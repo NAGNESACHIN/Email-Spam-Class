@@ -12,6 +12,10 @@ COPY ml ./ml
 COPY models ./models
 COPY data ./data
 
+# The trained joblib model is intentionally excluded from Git to avoid
+# committing generated binary artifacts. Build it into the deploy image.
+RUN python ml/train.py
+
 RUN addgroup --system app && adduser --system --ingroup app app \
     && chown -R app:app /app
 USER app
