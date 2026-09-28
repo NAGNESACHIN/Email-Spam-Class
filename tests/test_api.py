@@ -2,7 +2,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from backend.auth import SessionLocal, Scan, User
+from backend.auth import SessionLocal, Scan, User, OAuthState
 from backend.main import app, analyze_url, detect_lookalike_domains
 
 client = TestClient(app)
@@ -226,3 +226,92 @@ def test_batch_prediction_persists_in_one_request():
                 assert count == 2
     finally:
         backend_main.model=original
+
+
+def test_oauth_pkce_pair_uses_s256_and_binds_to_verifier():
+    from backend.main import _pkce_pair, _pkce_pair_from_verifier
+    verifier, challenge = _pkce_pair()
+    assert len(verifier) >= 43
+    assert challenge == _pkce_pair_from_verifier(verifier)[1]
+    assert len(challenge) == 43
+
+
+def test_oauth_start_creates_browser_bound_transaction(monkeypatch):
+    import backend.main as backend_main
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-google-secret")
+    monkeypatch.setattr(
+        backend_main,
+        "_oidc_metadata",
+        lambda provider, cfg: {
+            "issuer": "https://accounts.google.com",
+            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_endpoint": "https://oauth2.googleapis.com/token",
+            "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
+        },
+    )
+
+    with TestClient(app) as isolated:
+        response=isolated.get("/auth/google/start", follow_redirects=False)
+        assert response.status_code == 302
+        location=response.headers["location"]
+        assert "code_challenge=" in location
+        assert "code_challenge_method=S256" in location
+        assert "state=" in location
+        assert "nonce=" in location
+        assert isolated.cookies.get("mailguard_oauth_tx")
+        assert isolated.cookies.get("mailguard_oauth_pkce")
+        assert isolated.cookies.get("mailguard_oauth_tx_nonce")
+
+        from urllib.parse import parse_qs, urlparse
+        params=parse_qs(urlparse(location).query)
+        state=params["state"][0]
+
+        with SessionLocal() as db:
+            row=db.query(OAuthState).filter(OAuthState.state_hash==backend_main._sha256(state)).first()
+            assert row is not None
+            assert row.browser_binding_hash
+            assert row.code_challenge
+            assert row.nonce_hash
+            assert row.redirect_uri == "https://email-spam-class.vercel.app/api/auth/google/callback"
+
+
+def test_oauth_callback_consumes_state_and_rejects_replay(monkeypatch):
+    import backend.main as backend_main
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-google-client")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-google-secret")
+    monkeypatch.setattr(
+        backend_main,
+        "_oidc_metadata",
+        lambda provider, cfg: {
+            "issuer": "https://accounts.google.com",
+            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_endpoint": "https://oauth2.googleapis.com/token",
+            "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
+        },
+    )
+
+    with TestClient(app) as isolated:
+        start=isolated.get("/auth/google/start", follow_redirects=False)
+        from urllib.parse import parse_qs, urlparse
+        state=parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+
+        denied=isolated.get(
+            f"/auth/google/callback?error=access_denied&state={state}",
+            follow_redirects=False,
+        )
+        assert denied.status_code == 303
+        assert "oauth_error=provider_denied" in denied.headers["location"]
+
+        replay=isolated.get(
+            f"/auth/google/callback?error=access_denied&state={state}",
+            follow_redirects=False,
+        )
+        assert replay.status_code == 303
+        assert "oauth_error=invalid_or_expired_state" in replay.headers["location"]
+
+
+def test_legacy_oauth_code_exchange_endpoint_is_removed():
+    with TestClient(app) as isolated:
+        response=isolated.post("/auth/oauth/exchange", json={"code":"x"*32})
+        assert response.status_code == 404
