@@ -19,7 +19,7 @@ import joblib
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import case, func
+from sqlalchemy import case, func, text as sql_text
 from .auth import User, Scan, OAuthIdentity, OAuthState, OAuthCode, SESSION_COOKIE_NAME, get_db, current_user, make_token, hash_password, verify_password, valid_email
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,12 +32,41 @@ _rate_hits=defaultdict(deque)
 _AUTH_RATE_WINDOW_SECONDS=int(os.getenv("AUTH_RATE_WINDOW_SECONDS","300"))
 _AUTH_RATE_LIMIT=int(os.getenv("AUTH_RATE_LIMIT","10"))
 _auth_hits=defaultdict(deque)
+REDIS_URL=os.getenv("REDIS_URL","").strip()
+try:
+    import redis as _redis
+    REDIS_CLIENT=_redis.Redis.from_url(REDIS_URL,decode_responses=True) if REDIS_URL else None
+except ImportError:
+    REDIS_CLIENT=None
+
+
+def _memory_rate_limit(store,key,window,limit):
+    now=time.monotonic(); hits=store[key]
+    while hits and now-hits[0] > window: hits.popleft()
+    if len(hits) >= limit: return False
+    hits.append(now)
+    return True
+
+
+def _shared_rate_limit(key,window,limit):
+    if not REDIS_CLIENT:
+        return None
+    try:
+        count=int(REDIS_CLIENT.incr(key))
+        if count == 1:
+            REDIS_CLIENT.expire(key,window)
+        return count <= limit
+    except Exception:
+        return None
+
 
 def _rate_limit(request: Request):
-    now=time.monotonic(); key=request.client.host if request.client else "unknown"; hits=_rate_hits[key]
-    while hits and now-hits[0] > _RATE_WINDOW_SECONDS: hits.popleft()
-    if len(hits) >= _RATE_LIMIT: raise HTTPException(429,"Too many requests. Please try again later.")
-    hits.append(now)
+    client_ip=request.client.host if request.client else "unknown"
+    forwarded=request.headers.get("x-forwarded-for","").split(",")[0].strip()
+    key_ip=forwarded or client_ip
+    shared=_shared_rate_limit(f"mailguard:rate:{key_ip}",_RATE_WINDOW_SECONDS,_RATE_LIMIT)
+    allowed=_memory_rate_limit(_rate_hits,key_ip,_RATE_WINDOW_SECONDS,_RATE_LIMIT) if shared is None else shared
+    if not allowed: raise HTTPException(429,"Too many requests. Please try again later.")
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):
@@ -451,18 +480,21 @@ def parse_email(raw):
     }
 
 def _auth_rate_limit(request: Request, email: str):
-    now=time.monotonic()
-    ip=request.client.host if request.client else "unknown"
+    client_ip=request.client.host if request.client else "unknown"
+    forwarded=request.headers.get("x-forwarded-for","").split(",")[0].strip()
+    ip=forwarded or client_ip
     normalized=email.strip().lower()
-    keys=(f"ip:{ip}",f"email:{normalized}")
+    email_key=_sha256(normalized)
+    keys=(f"ip:{ip}",f"email:{email_key}")
+    decisions=[]
     for key in keys:
-        hits=_auth_hits[key]
-        while hits and now-hits[0] > _AUTH_RATE_WINDOW_SECONDS:
-            hits.popleft()
-        if len(hits) >= _AUTH_RATE_LIMIT:
+        shared=_shared_rate_limit(f"mailguard:auth:{key}",_AUTH_RATE_WINDOW_SECONDS,_AUTH_RATE_LIMIT)
+        decisions.append((key,shared))
+    for key,shared in decisions:
+        if shared is None and not _memory_rate_limit(_auth_hits,key,_AUTH_RATE_WINDOW_SECONDS,_AUTH_RATE_LIMIT):
             raise HTTPException(429,"Too many authentication attempts. Please try again later.")
-    for key in keys:
-        _auth_hits[key].append(now)
+        if shared is False:
+            raise HTTPException(429,"Too many authentication attempts. Please try again later.")
 
 # --- OAuth / SSO ---------------------------------------------------------
 OAUTH_FRONTEND_URL=os.getenv("FRONTEND_URL","https://email-spam-class.vercel.app").rstrip("/")
@@ -724,7 +756,19 @@ def analytics(user: User=Depends(current_user), db=Depends(get_db)):
     return {"total_scanned":total,"spam_detected":spam,"ham_detected":total-spam,"spam_rate":round(spam/total*100,2) if total else 0,"high_risk":high,"medium_risk":medium,"recent":recent_payload}
 
 @app.get("/health")
-def health(): return {"status":"ok","model_loaded":model is not None}
+def health(db=Depends(get_db)):
+    db_ok=True
+    try:
+        db.execute(sql_text("SELECT 1"))
+    except Exception:
+        db_ok=False
+    model_ok=model is not None
+    if db_ok and model_ok:
+        return {"status":"ok","model_loaded":True,"database":"ok"}
+    return JSONResponse(
+        status_code=503,
+        content={"status":"degraded","model_loaded":model_ok,"database":"ok" if db_ok else "unavailable"}
+    )
 
 @app.get("/model-comparison")
 def model_comparison():
