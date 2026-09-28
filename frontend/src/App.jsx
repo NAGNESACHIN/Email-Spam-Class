@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+const API_URL = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "")
+  : "/api";
 
 const samples = {
   spam: "Congratulations! You have won a FREE cash prize. Click http://bit.ly/reward now to claim your reward!",
