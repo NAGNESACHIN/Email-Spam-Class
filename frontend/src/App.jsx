@@ -69,6 +69,9 @@ export default function App() {
   const security = header?.email_security;
 
   function navigate(next) {
+    if (next === "scanner" && !result && !header) {
+      setMode(mailConfig.defaultMode || "message");
+    }
     window.location.hash = next;
     setView(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -302,7 +305,7 @@ export default function App() {
   }, [backendStatus, modelLoaded]);
 
   return (
-    <main className="app-shell">
+    <main className={mailConfig.compactResults ? "app-shell compact-results" : "app-shell"}>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
 
@@ -434,8 +437,7 @@ export default function App() {
           </section>
         </section>
       ) : (
-        <>
-          {view === "details" && (
+        {view === "details" && (
             <section className="page-section">
               <section className="dashboard-header details-header">
                 <div>
@@ -503,7 +505,6 @@ export default function App() {
             </section>
           )}
 
-        <>
           {view === "mail-settings" && (
             <section className="page-section">
               <section className="dashboard-header">
@@ -612,7 +613,7 @@ export default function App() {
                   </div>
 
                   <div className="mode-tabs">
-                    <button className={mode === "message" ? "active" : ""} onClick={() => { setMode(mailConfig.defaultMode || "message"); setError(""); }}>
+                    <button className={mode === "message" ? "active" : ""} onClick={() => { setMode("message"); setError(""); }}>
                       Message
                     </button>
                     <button className={mode === "raw" ? "active" : ""} onClick={() => { setMode("raw"); setError(""); }}>
@@ -789,7 +790,7 @@ export default function App() {
                 )}
               </section>
 
-              {security && (
+              {security && mailConfig.showAdvanced && (
                 <section className="card section-card">
                   <div className="section-heading">
                     <div>
