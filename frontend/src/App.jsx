@@ -139,13 +139,11 @@ export default function App() {
     }
   }
 
-  function selectProvider(provider) {
+  function startOAuth(provider) {
     setAuthProvider(provider);
     setError("");
     setNotice("");
-    if (provider !== "email") {
-      setNotice(`${provider} sign-in is ready in the interface. Connect the provider OAuth credentials to enable SSO.`);
-    }
+    window.location.assign(`${API_URL}/auth/${provider}/start`);
   }
 
   async function authenticate() {
@@ -306,15 +304,47 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => setView(viewFromHash());
     window.addEventListener("hashchange", onHashChange);
+
+    const params = new URLSearchParams(window.location.search);
+    const oauthCode = params.get("oauth_code");
+    const oauthError = params.get("oauth_error");
+
+    if (oauthCode && !token) {
+      setLoading(true);
+      setError("");
+      setNotice("");
+      request("/auth/oauth/exchange", { code: oauthCode })
+        .then((data) => {
+          localStorage.setItem("mailguard_token", data.access_token);
+          setToken(data.access_token);
+          setUser(data.user || null);
+          window.history.replaceState(null, "", window.location.pathname + "#details");
+          setView("details");
+        })
+        .catch((err) => {
+          setError(err.message || "OAuth sign-in failed.");
+          window.history.replaceState(null, "", window.location.pathname);
+        })
+        .finally(() => setLoading(false));
+    } else if (oauthError) {
+      const provider = params.get("provider") || "provider";
+      const message = oauthError === "provider_not_configured"
+        ? provider + " SSO is not configured yet. Add the provider OAuth credentials on the backend."
+        : "Unable to complete " + provider + " sign-in (" + oauthError + ").";
+      setError(message);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+
     if (token) {
       if (!window.location.hash || !["details", "scanner", "history", "mail-settings", "models"].includes(window.location.hash.slice(1))) {
         window.location.hash = "details";
       }
       setView(viewFromHash());
-    } else {
-      window.history.replaceState(null, "", window.location.pathname);
+    } else if (!oauthCode) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.hash);
       setView("scanner");
     }
+
     checkBackend();
     const retry = window.setInterval(() => checkBackend({ silent: true }), 20000);
     return () => {
@@ -437,7 +467,7 @@ export default function App() {
               <button
                 type="button"
                 className={authProvider === "Google (Gmail)" ? "provider-button active" : "provider-button"}
-                onClick={() => selectProvider("Google (Gmail)")}
+                onClick={() => startOAuth("google")}
               >
                 <span className="provider-icon google">G</span>
                 <span>Google <small>Gmail</small></span>
@@ -445,7 +475,7 @@ export default function App() {
               <button
                 type="button"
                 className={authProvider === "Yahoo Mail" ? "provider-button active" : "provider-button"}
-                onClick={() => selectProvider("Yahoo Mail")}
+                onClick={() => startOAuth("yahoo")}
               >
                 <span className="provider-icon yahoo">Y!</span>
                 <span>Yahoo <small>Mail</small></span>
@@ -453,7 +483,7 @@ export default function App() {
               <button
                 type="button"
                 className={authProvider === "Microsoft" ? "provider-button active" : "provider-button"}
-                onClick={() => selectProvider("Microsoft")}
+                onClick={() => startOAuth("microsoft")}
               >
                 <span className="provider-icon microsoft"><i></i><i></i><i></i><i></i></span>
                 <span>Microsoft <small>Outlook / 365</small></span>
@@ -461,7 +491,7 @@ export default function App() {
               <button
                 type="button"
                 className={authProvider === "email" ? "provider-button active" : "provider-button"}
-                onClick={() => selectProvider("email")}
+                onClick={() => { setAuthProvider("email"); setError(""); setNotice(""); }}
               >
                 <span className="provider-icon other">@</span>
                 <span>Other <small>Email system</small></span>
