@@ -41,9 +41,17 @@ async def unhandled_exception_handler(request, exc):
     return JSONResponse(status_code=500, content={"detail":"Internal server error."})
 _cors_default="http://localhost:5173"
 ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ORIGINS",_cors_default).split(",") if x.strip()]
-if ENVIRONMENT in {"production","prod"} and (not ALLOWED_ORIGINS or any(x=="*" for x in ALLOWED_ORIGINS)):
-    raise RuntimeError("Production CORS_ORIGINS must explicitly list trusted frontend origins.")
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+CORS_ORIGIN_REGEX=os.getenv("CORS_ORIGIN_REGEX","").strip() or None
+if ENVIRONMENT in {"production","prod"} and (not ALLOWED_ORIGINS or any(x=="*" for x in ALLOWED_ORIGINS)) and not CORS_ORIGIN_REGEX:
+    raise RuntimeError("Production CORS configuration must explicitly list trusted origins or provide CORS_ORIGIN_REGEX.")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
