@@ -227,7 +227,7 @@ def _domain_age_signal(host: str):
         return {"status":"disabled"}
     try:
         request=urllib.request.Request(
-            f"https://rdap.org/domain/{quote(host,safe=".-")}",
+            f"https://rdap.org/domain/{quote(host,safe='.-')}",
             headers={"Accept":"application/rdap+json","User-Agent":"MailGuard-AI/4.0"},
             method="GET",
         )
