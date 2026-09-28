@@ -16,7 +16,7 @@ services:
       - key: CORS_ORIGINS
         value: https://frontend-two-alpha-51.vercel.app
       - key: CORS_ORIGIN_REGEX
-        value: ^https://email-spam-class(?:-[a-z0-9]+-nagnesachins-projects)?\\.vercel\\.app$
+        value: ^https://email-spam-class(?:-[a-z0-9]+-nagnesachins-projects)?\.vercel\.app$
       - key: VIRUSTOTAL_API_KEY
         sync: false
       - key: RDAP_LOOKUP_ENABLED
