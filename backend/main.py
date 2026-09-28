@@ -8,7 +8,7 @@ from email.parser import Parser
 from html.parser import HTMLParser
 from urllib.parse import urlparse, parse_qs, urlencode
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
 import time
 import base64
@@ -543,7 +543,7 @@ def _oauth_start(provider, db):
     state_row=OAuthState(
         provider=provider,
         state_hash=_sha256(state),
-        expires_at=_oauth_now()+_oauth_now()+__import__("datetime").timedelta(minutes=10),
+        expires_at=_oauth_now()+_oauth_now()+timedelta(minutes=10),
     )
     db.add(state_row)
     db.commit()
@@ -611,7 +611,7 @@ def _oauth_complete(provider, code, state, db):
     db.add(OAuthCode(
         code_hash=_sha256(one_time),
         user_id=user.id,
-        expires_at=_oauth_now()+__import__("datetime").timedelta(minutes=2),
+        expires_at=_oauth_now()+timedelta(minutes=2),
     ))
     db.commit()
     params=urlencode({"oauth_code":one_time,"provider":provider})
