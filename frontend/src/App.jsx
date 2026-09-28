@@ -8,14 +8,16 @@ const samples = {
 };
 
 const navItems = [
+  { id: "details", label: "Details", icon: "◉" },
   { id: "scanner", label: "Scanner", icon: "✦" },
   { id: "history", label: "History", icon: "◷" },
+  { id: "mail-settings", label: "Mail config", icon: "⚙" },
   { id: "models", label: "Models", icon: "◒" },
 ];
 
 function viewFromHash() {
   const value = window.location.hash.replace("#", "");
-  return ["scanner", "history", "models"].includes(value) ? value : "scanner";
+  return ["details", "scanner", "history", "mail-settings", "models"].includes(value) ? value : "details";
 }
 
 function formatPercent(value) {
@@ -46,6 +48,18 @@ export default function App() {
   const [comparison, setComparison] = useState(null);
   const [evaluationReports, setEvaluationReports] = useState(null);
 
+  const [mailConfig, setMailConfig] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("mailguard_config")) || {
+        defaultMode: "message",
+        showAdvanced: true,
+        compactResults: false,
+      };
+    } catch {
+      return { defaultMode: "message", showAdvanced: true, compactResults: false };
+    }
+  });
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [backendStatus, setBackendStatus] = useState("checking");
@@ -108,16 +122,26 @@ export default function App() {
   async function authenticate() {
     setLoading(true);
     setError("");
+    setNotice("");
     try {
       const data = await request(`/auth/${authMode}`, {
         email: authEmail,
         password: authPassword,
       });
+
+      if (authMode === "register") {
+        setAuthMode("login");
+        setAuthPassword("");
+        setNotice("Account created successfully. Please sign in to continue.");
+        return;
+      }
+
       localStorage.setItem("mailguard_token", data.access_token);
       setToken(data.access_token);
       setUser(data.user || null);
       setAuthPassword("");
-      navigate("scanner");
+      setView("details");
+      navigate("details");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -133,8 +157,9 @@ export default function App() {
     setResult(null);
     setHeader(null);
     setBatch([]);
+    setNotice("");
     setAuthMode("login");
-    navigate("scanner");
+    navigate("details");
   }
 
   async function analyze() {
@@ -246,7 +271,7 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => setView(viewFromHash());
     window.addEventListener("hashchange", onHashChange);
-    if (!window.location.hash) window.location.hash = "scanner";
+    if (!window.location.hash) window.location.hash = token ? "details" : "scanner";
     checkBackend();
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -261,6 +286,10 @@ export default function App() {
       Promise.all([loadComparison(), loadEvaluationReports()]);
     }
   }, [view, token]);
+
+  useEffect(() => {
+    localStorage.setItem("mailguard_config", JSON.stringify(mailConfig));
+  }, [mailConfig]);
 
   const authSubtitle = authMode === "login"
     ? "Access your secure personal scan history."
@@ -278,7 +307,7 @@ export default function App() {
       <div className="ambient ambient-two" />
 
       <nav className="topbar">
-        <button className="brand" onClick={() => navigate("scanner")} aria-label="MailGuard AI home">
+        <button className="brand" onClick={() => navigate(token ? "details" : "scanner")} aria-label="MailGuard AI home">
           <span className="brand-icon">✉</span>
           <span>MailGuard <b>AI</b></span>
         </button>
@@ -382,6 +411,8 @@ export default function App() {
 
             {error && <div className="inline-error" role="alert">{error}</div>}
 
+            {notice && <div className="inline-success" role="status">{notice}</div>}
+
             <button
               className="primary-button full"
               onClick={authenticate}
@@ -394,6 +425,7 @@ export default function App() {
               className="switch-button"
               onClick={() => {
                 setError("");
+                setNotice("");
                 setAuthMode(authMode === "login" ? "register" : "login");
               }}
             >
@@ -403,6 +435,154 @@ export default function App() {
         </section>
       ) : (
         <>
+          {view === "details" && (
+            <section className="page-section">
+              <section className="dashboard-header details-header">
+                <div>
+                  <span className="eyebrow">ACCOUNT OVERVIEW</span>
+                  <h1>Your workspace</h1>
+                  <p>Manage your account, review scans, and configure how MailGuard handles your email analysis workflow.</p>
+                </div>
+                <div className="user-chip">
+                  <span>{user?.email?.slice(0, 1).toUpperCase() || "U"}</span>
+                  <div>
+                    <small>Authenticated account</small>
+                    <strong>{user?.email || "Loading profile…"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <div className="details-grid">
+                <section className="card profile-card">
+                  <div className="section-heading">
+                    <div>
+                      <div className="card-kicker">YOUR DETAILS</div>
+                      <h2>Account information</h2>
+                    </div>
+                    <span className="count-pill">SECURE</span>
+                  </div>
+                  <div className="detail-list">
+                    <div><span>Email</span><strong>{user?.email || "—"}</strong></div>
+                    <div><span>User ID</span><strong>{user?.id || "—"}</strong></div>
+                    <div><span>Authentication</span><strong>JWT session</strong></div>
+                    <div><span>API status</span><strong>{backendStatus === "online" ? "Online" : backendStatus === "checking" ? "Checking…" : "Offline"}</strong></div>
+                    <div><span>ML model</span><strong>{modelLoaded ? "Loaded" : "Unavailable"}</strong></div>
+                  </div>
+                </section>
+
+                <section className="card quick-card">
+                  <div className="section-heading">
+                    <div>
+                      <div className="card-kicker">QUICK ACCESS</div>
+                      <h2>MailGuard workspace</h2>
+                    </div>
+                  </div>
+                  <div className="quick-actions">
+                    <button onClick={() => navigate("scanner")}><span>✦</span><div><strong>Open scanner</strong><small>Analyze an email or raw .eml file.</small></div></button>
+                    <button onClick={() => navigate("history")}><span>◷</span><div><strong>View history</strong><small>Review your saved scan activity.</small></div></button>
+                    <button onClick={() => navigate("mail-settings")}><span>⚙</span><div><strong>Mail configuration</strong><small>Set your scanning preferences.</small></div></button>
+                  </div>
+                </section>
+              </div>
+
+              <section className="card status-card">
+                <div className="section-heading">
+                  <div>
+                    <div className="card-kicker">SYSTEM STATUS</div>
+                    <h2>Security services</h2>
+                  </div>
+                  <button className="secondary-button" onClick={checkBackend}>Refresh</button>
+                </div>
+                <div className="status-grid">
+                  <div><span>API</span><strong className={backendStatus}>{backendStatus === "online" ? "Online" : backendStatus === "checking" ? "Checking" : "Offline"}</strong></div>
+                  <div><span>Spam classifier</span><strong>{modelLoaded ? "Loaded" : "Unavailable"}</strong></div>
+                  <div><span>Scan history</span><strong>Enabled</strong></div>
+                  <div><span>Mail configuration</span><strong>Saved locally</strong></div>
+                </div>
+              </section>
+            </section>
+          )}
+
+        <>
+          {view === "mail-settings" && (
+            <section className="page-section">
+              <section className="dashboard-header">
+                <div>
+                  <span className="eyebrow">MAIL CONFIGURATION</span>
+                  <h1>Scanning preferences</h1>
+                  <p>Choose the default workflow and presentation preferences for your MailGuard workspace.</p>
+                </div>
+              </section>
+
+              <section className="card settings-card">
+                <div className="section-heading">
+                  <div>
+                    <div className="card-kicker">SCANNER DEFAULTS</div>
+                    <h2>How MailGuard should open</h2>
+                    <p>These preferences are saved in this browser for your account.</p>
+                  </div>
+                  <span className="count-pill">LOCAL</span>
+                </div>
+
+                <label className="setting-row">
+                  <div><strong>Default scan mode</strong><span>Choose what opens when you enter the scanner.</span></div>
+                  <select
+                    value={mailConfig.defaultMode}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setMailConfig((current) => ({ ...current, defaultMode: value }));
+                    }}
+                  >
+                    <option value="message">Message scanner</option>
+                    <option value="raw">Raw email analyzer</option>
+                  </select>
+                </label>
+
+                <label className="setting-row">
+                  <div><strong>Advanced phishing intelligence</strong><span>Keep sender, URL, authentication, HTML, and attachment signals visible.</span></div>
+                  <input
+                    className="toggle"
+                    type="checkbox"
+                    checked={mailConfig.showAdvanced}
+                    onChange={(event) => setMailConfig((current) => ({ ...current, showAdvanced: event.target.checked }))}
+                  />
+                </label>
+
+                <label className="setting-row">
+                  <div><strong>Compact results</strong><span>Use a denser result layout when reviewing several scans.</span></div>
+                  <input
+                    className="toggle"
+                    type="checkbox"
+                    checked={mailConfig.compactResults}
+                    onChange={(event) => setMailConfig((current) => ({ ...current, compactResults: event.target.checked }))}
+                  />
+                </label>
+              </section>
+
+              <section className="card settings-card">
+                <div className="section-heading">
+                  <div>
+                    <div className="card-kicker">MAIL ANALYSIS PIPELINE</div>
+                    <h2>Active capabilities</h2>
+                  </div>
+                </div>
+                <div className="capability-grid">
+                  <div><span>Message model</span><strong>Word + character TF-IDF</strong></div>
+                  <div><span>Raw email</span><strong>Headers + authentication + MIME</strong></div>
+                  <div><span>URL checks</span><strong>Structural heuristics</strong></div>
+                  <div><span>Domain intelligence</span><strong>RDAP enrichment</strong></div>
+                  <div><span>External reputation</span><strong>VirusTotal optional</strong></div>
+                  <div><span>Batch analysis</span><strong>Up to 500 messages</strong></div>
+                </div>
+              </section>
+
+              <div className="settings-note">
+                <strong>Note</strong>
+                <span>Mail provider inbox connections are not enabled in this version. MailGuard analyzes email content you paste or upload; it does not access your inbox directly.</span>
+              </div>
+            </section>
+          )}
+
           {view === "scanner" && (
             <>
               <section className="dashboard-header">
@@ -432,7 +612,7 @@ export default function App() {
                   </div>
 
                   <div className="mode-tabs">
-                    <button className={mode === "message" ? "active" : ""} onClick={() => { setMode("message"); setError(""); }}>
+                    <button className={mode === "message" ? "active" : ""} onClick={() => { setMode(mailConfig.defaultMode || "message"); setError(""); }}>
                       Message
                     </button>
                     <button className={mode === "raw" ? "active" : ""} onClick={() => { setMode("raw"); setError(""); }}>
