@@ -548,7 +548,7 @@ export default function App() {
                 onClick={() => { setAuthProvider("email"); setError(""); setNotice(""); }}
               >
                 <span className="provider-icon other">@</span>
-                <span>Other <small>Email system</small></span>
+                <span>Email <small>Password sign-in</small></span>
               </button>
             </div>
 
