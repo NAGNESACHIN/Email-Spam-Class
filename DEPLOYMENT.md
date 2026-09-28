@@ -64,59 +64,48 @@ Production uses the Vercel same-origin `/api` proxy defined in `frontend/vercel.
 After saving frontend settings, redeploy the frontend.
 
 ## 4. Google, Yahoo, and Microsoft SSO
+OAuth/OIDC is implemented as a backend-driven authorization-code flow. The browser never receives provider access tokens, ID tokens, refresh tokens, or a MailGuard bearer token. After a successful callback, the backend creates the same production HttpOnly session cookie used by password login.
 
-The backend implements OAuth/OIDC authorization-code flows with server-side client secrets and a short-lived, one-time exchange code. Provider credentials must be stored only in Render.
+The public callback origin is the Vercel application, and Vercel rewrites `/api/*` to the Render API. Register these exact callback URIs with the providers:
+
+- Google: `https://email-spam-class.vercel.app/api/auth/google/callback`
+- Yahoo: `https://email-spam-class.vercel.app/api/auth/yahoo/callback`
+- Microsoft: `https://email-spam-class.vercel.app/api/auth/microsoft/callback`
+
+Before entering production credentials, verify that the Render environment contains the matching `*_CLIENT_ID`, `*_CLIENT_SECRET`, and `*_REDIRECT_URI` values. Keep all provider secrets in Render; never put them in Vercel frontend variables or source control.
+
+### OAuth/OIDC security flow
+
+Each authorization attempt creates a short-lived database transaction containing a SHA-256 state hash, browser-binding hash, PKCE challenge where supported, OIDC nonce hash, exact redirect URI, and expiry. The raw transaction values are held only in short-lived HttpOnly Secure SameSite cookies in production.
+
+Google and Microsoft use PKCE with `S256`. Yahoo uses its documented authorization-code/OIDC flow with cryptographically browser-bound `state` and a required `nonce`; PKCE should not be enabled for Yahoo until its provider configuration explicitly advertises support for it.
+
+At callback, MailGuard validates the transaction and consumes it once, exchanges the code server-to-server, then validates the returned OIDC ID token signature using the provider's trusted JWKS. Validation includes issuer, audience, authorized party when present, expiration/timestamps, subject, and nonce. Microsoft `common` sign-in additionally binds the issuer to the signed tenant identifier.
+
+OAuth identities are keyed by provider + issuer + subject. Email is an account attribute, not the stable OAuth identity key. A new OAuth identity is not automatically merged with an existing password account that happens to use the same email; explicit account-linking can be added later.
+
+The callback finishes with a `303` redirect to the fixed `FRONTEND_URL#details` location and sets the normal MailGuard session cookie. There is no frontend `oauth_code` exchange endpoint and no OAuth token storage in localStorage or sessionStorage.
 
 ### Google
-
-Create a Web application OAuth client in Google Cloud Console. Add this exact authorized redirect URI:
-
-`https://mailguard-ai-api.onrender.com/auth/google/callback`
-
-Set in Render:
-
+Create a Web application OAuth client in Google Cloud Console. Register the exact Vercel callback URI above. Set:
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REDIRECT_URI` = the callback URL above
-
-The application requests the `openid email profile` scopes and uses Google's userinfo endpoint after exchanging the authorization code. Google requires the redirect URI to exactly match a registered URI. citeturn185304search0
+- `GOOGLE_REDIRECT_URI=https://email-spam-class.vercel.app/api/auth/google/callback`
 
 ### Yahoo
-
-Create an application in the Yahoo Developer Network and register this exact redirect URI:
-
-`https://mailguard-ai-api.onrender.com/auth/yahoo/callback`
-
-Set in Render:
-
+Create a Yahoo application and register the exact Vercel callback URI above. Set:
 - `YAHOO_CLIENT_ID`
 - `YAHOO_CLIENT_SECRET`
-- `YAHOO_REDIRECT_URI` = the callback URL above
-
-The implementation uses Yahoo's authorization-code flow and UserInfo endpoint with OpenID Connect scopes. Yahoo documents the authorization endpoint at `https://api.login.yahoo.com/oauth2/request_auth`, the token endpoint at `https://api.login.yahoo.com/oauth2/get_token`, and the UserInfo endpoint at `https://api.login.yahoo.com/openid/v1/userinfo`. citeturn185304search3turn185304search1
+- `YAHOO_REDIRECT_URI=https://email-spam-class.vercel.app/api/auth/yahoo/callback`
 
 ### Microsoft
-
-Create a Microsoft Entra app registration and add this exact Web redirect URI:
-
-`https://mailguard-ai-api.onrender.com/auth/microsoft/callback`
-
-Set in Render:
-
+Create a Microsoft Entra app registration and register the exact Vercel Web redirect URI above. Set:
 - `MICROSOFT_CLIENT_ID`
 - `MICROSOFT_CLIENT_SECRET`
 - `MICROSOFT_TENANT=common`
-- `MICROSOFT_REDIRECT_URI` = the callback URL above
+- `MICROSOFT_REDIRECT_URI=https://email-spam-class.vercel.app/api/auth/microsoft/callback`
 
-The implementation uses the Microsoft identity platform authorization-code flow and the UserInfo endpoint. Microsoft documents `https://graph.microsoft.com/oidc/userinfo` as the UserInfo endpoint and supports the `common` tenant for multi-account sign-in scenarios. citeturn161741search0turn878762search2
-
-Do not paste client secrets into GitHub, Vercel, frontend code, or chat.
-## 5. CORS
-
-The blueprint allows the canonical Vercel production origin and a narrow preview-domain regex. Keep the trusted-origin configuration explicit; do not use `*` with credentials.
-
-For multiple trusted origins, provide a comma-separated list.
-
+Use authorization code + OIDC. For a `common` tenant configuration, the callback validator checks the signed `tid` claim and requires the ID token issuer to be the corresponding `https://login.microsoftonline.com/{tid}/v2.0` issuer.
 ## 6. Database initialization and migrations
 
 MailGuard bootstraps the current schema with SQLAlchemy metadata. Alembic is now included for reviewed schema evolution. For a fresh database, run `alembic upgrade head`. For the existing Neon database created by previous deployments, first run `alembic stamp 0001_baseline`, then `alembic upgrade head` to apply the hardening migration. Review the target database before applying foreign-key constraints.
