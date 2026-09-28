@@ -589,6 +589,8 @@ def _oauth_complete(provider, code, state, db):
     subject=str(info.get("sub") or "").strip()
     if not email or not subject or not valid_email(email):
         return _oauth_redirect_error(provider,"provider_did_not_return_a_valid_email")
+    if provider in {"google","yahoo"} and info.get("email_verified") is not True:
+        return _oauth_redirect_error(provider,"provider_email_is_not_verified")
 
     identity=db.query(OAuthIdentity).filter(
         OAuthIdentity.provider==provider,
