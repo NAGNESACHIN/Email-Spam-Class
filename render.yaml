@@ -2,6 +2,7 @@ services:
   - type: web
     name: mailguard-ai-api
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile.backend
     dockerContext: .
     healthCheckPath: /health
