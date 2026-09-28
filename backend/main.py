@@ -65,8 +65,7 @@ def _rate_limit(request: Request):
     forwarded=request.headers.get("x-forwarded-for","").split(",")[0].strip()
     key_ip=forwarded or client_ip
     shared=_shared_rate_limit(f"mailguard:rate:{key_ip}",_RATE_WINDOW_SECONDS,_RATE_LIMIT)
-    allowed=_memory_rate_limit(_rate_hits,key_ip,_RATE_WINDOW_SECONDS,_RATE_LIMIT) if shared is None else shared
-    if not allowed: raise HTTPException(429,"Too many requests. Please try again later.")
+    return _memory_rate_limit(_rate_hits,key_ip,_RATE_WINDOW_SECONDS,_RATE_LIMIT) if shared is None else shared
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):
@@ -121,13 +120,16 @@ def _validate_csrf(request: Request):
         cookie_token=request.cookies.get("mailguard_csrf","")
         header_token=request.headers.get("X-CSRF-Token","")
         if not cookie_token or not header_token or not secrets.compare_digest(cookie_token,header_token):
-            raise HTTPException(403,"CSRF validation failed.")
+            return False
+    return True
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    _rate_limit(request)
-    _validate_csrf(request)
+    if not _rate_limit(request):
+        return JSONResponse(status_code=429,content={"detail":"Too many requests. Please try again later."})
+    if not _validate_csrf(request):
+        return JSONResponse(status_code=403,content={"detail":"CSRF validation failed."})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
