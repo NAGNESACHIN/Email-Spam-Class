@@ -61,11 +61,13 @@ macOS/Linux:
 source .venv/bin/activate
 ```
 
-### 2. Install dependencies
+### 2. Install development dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+The production container installs `requirements.txt`; ML training and test-only packages live in the development/ML requirement files.
 
 ### 3. Train the model
 
@@ -157,6 +159,10 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] Optional VirusTotal URL reputation integration
 - [x] Automated API/frontend test suite
 - [x] Production deployment configuration
+- [x] Secure cookie session foundation
+- [x] Alembic migration foundation
+- [x] SQL-optimized analytics and batch persistence
+- [x] Robust CSV batch parsing
 
 ## Advanced evaluation
 
@@ -198,7 +204,7 @@ For an existing database that was initialized by `create_all()`, first record th
 
 ## Production notes
 
-Set `JWT_SECRET`, `DATABASE_URL`, and `CORS_ORIGINS` through deployment secrets/environment variables. Production Vercel uses the same-origin `/api` proxy, so `VITE_API_URL` is not required there. Do not commit `.env` files or production credentials. Authentication uses an HttpOnly, Secure, SameSite session cookie in production; the frontend only keeps a non-sensitive authenticated flag in local storage. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
+Set `JWT_SECRET`, `DATABASE_URL`, and `CORS_ORIGINS` through deployment secrets/environment variables. OAuth provider credentials are intentionally excluded from this phase and should be configured only when the SSO integration is enabled. Production Vercel uses the same-origin `/api` proxy, so `VITE_API_URL` is not required there. Do not commit `.env` files or production credentials. Authentication uses an HttpOnly, Secure, SameSite session cookie in production; the frontend only keeps a non-sensitive authenticated flag in local storage. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
 
 
 ## Optional threat intelligence
