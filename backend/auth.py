@@ -1,8 +1,9 @@
-import os, hashlib, secrets, re
+import os, hashlib, secrets, re, time
 from datetime import datetime, timezone, timedelta
 import jwt
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 DATABASE_URL=os.getenv("DATABASE_URL","sqlite:///./mailguard.db")
@@ -44,7 +45,19 @@ class Scan(Base):
     spam_probability=Column(Float,nullable=False)
     preview=Column(Text,nullable=False)
 
-Base.metadata.create_all(engine)
+def _initialize_database():
+    attempts=5
+    for attempt in range(attempts):
+        try:
+            Base.metadata.create_all(engine)
+            return
+        except OperationalError:
+            engine.dispose()
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(2 ** attempt, 8))
+
+_initialize_database()
 
 def get_db():
     db=SessionLocal()
