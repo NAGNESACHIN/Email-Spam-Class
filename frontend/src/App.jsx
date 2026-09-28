@@ -36,6 +36,8 @@ export default function App() {
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [authProvider, setAuthProvider] = useState("email");
   const [view, setView] = useState(viewFromHash());
 
   const [text, setText] = useState("");
@@ -137,6 +139,15 @@ export default function App() {
     }
   }
 
+  function selectProvider(provider) {
+    setAuthProvider(provider);
+    setError("");
+    setNotice("");
+    if (provider !== "email") {
+      setNotice(`${provider} sign-in is ready in the interface. Connect the provider OAuth credentials to enable SSO.`);
+    }
+  }
+
   async function authenticate() {
     setLoading(true);
     setError("");
@@ -158,6 +169,8 @@ export default function App() {
       setToken(data.access_token);
       setUser(data.user || null);
       setAuthPassword("");
+      setShowPassword(false);
+      setAuthProvider("email");
       setView("details");
       navigate("details");
     } catch (err) {
@@ -177,6 +190,8 @@ export default function App() {
     setBatch([]);
     setNotice("");
     setAuthMode("login");
+    setShowPassword(false);
+    setAuthProvider("email");
     window.history.replaceState(null, "", window.location.pathname);
     setView("scanner");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -417,6 +432,44 @@ export default function App() {
             <h2>{authMode === "login" ? "Welcome back" : "Create your account"}</h2>
             <p>{authSubtitle}</p>
 
+            <div className="provider-label">CONTINUE WITH</div>
+            <div className="provider-grid">
+              <button
+                type="button"
+                className={authProvider === "Google (Gmail)" ? "provider-button active" : "provider-button"}
+                onClick={() => selectProvider("Google (Gmail)")}
+              >
+                <span className="provider-icon google">G</span>
+                <span>Google <small>Gmail</small></span>
+              </button>
+              <button
+                type="button"
+                className={authProvider === "Yahoo Mail" ? "provider-button active" : "provider-button"}
+                onClick={() => selectProvider("Yahoo Mail")}
+              >
+                <span className="provider-icon yahoo">Y!</span>
+                <span>Yahoo <small>Mail</small></span>
+              </button>
+              <button
+                type="button"
+                className={authProvider === "Microsoft" ? "provider-button active" : "provider-button"}
+                onClick={() => selectProvider("Microsoft")}
+              >
+                <span className="provider-icon microsoft"><i></i><i></i><i></i><i></i></span>
+                <span>Microsoft <small>Outlook / 365</small></span>
+              </button>
+              <button
+                type="button"
+                className={authProvider === "email" ? "provider-button active" : "provider-button"}
+                onClick={() => selectProvider("email")}
+              >
+                <span className="provider-icon other">@</span>
+                <span>Other <small>Email system</small></span>
+              </button>
+            </div>
+
+            <div className="auth-divider"><span>OR USE EMAIL</span></div>
+
             <label className="field">
               <span>Email address</span>
               <input
@@ -430,16 +483,27 @@ export default function App() {
 
             <label className="field">
               <span>Password</span>
-              <input
-                type="password"
-                value={authPassword}
-                onChange={(event) => setAuthPassword(event.target.value)}
-                placeholder="8+ characters"
-                autoComplete={authMode === "login" ? "current-password" : "new-password"}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && authEmail && authPassword) authenticate();
-                }}
-              />
+              <div className="password-field">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                  placeholder="8+ characters"
+                  autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && authEmail && authPassword) authenticate();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="password-toggle"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                  onClick={() => setShowPassword((value) => !value)}
+                >
+                  {showPassword ? "◉" : "◌"}
+                </button>
+              </div>
             </label>
 
             {error && <div className="inline-error" role="alert">{error}</div>}
