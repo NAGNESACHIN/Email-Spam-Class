@@ -1,7 +1,7 @@
 import os, hashlib, secrets, re, time
 from datetime import datetime, timezone, timedelta
 import jwt
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, UniqueConstraint, ForeignKey, Index
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -119,10 +119,16 @@ def valid_email(email):
 def make_token(user):
     return jwt.encode({"sub":str(user.id),"email":user.email,"exp":datetime.now(timezone.utc)+timedelta(hours=24)},SECRET_KEY,algorithm="HS256")
 
-def current_user(authorization:str=Header(default=""),db:Session=Depends(get_db)):
-    if not authorization.startswith("Bearer "): raise HTTPException(401,"Authentication required.")
+SESSION_COOKIE_NAME="__Host-mailguard_session" if ENVIRONMENT in {"production","prod"} else "mailguard_session"
+
+
+def current_user(request:Request,authorization:str=Header(default=""),db:Session=Depends(get_db)):
+    session_token=request.cookies.get(SESSION_COOKIE_NAME) or ""
+    bearer=authorization[7:] if authorization.startswith("Bearer ") else ""
+    token=session_token or bearer
+    if not token: raise HTTPException(401,"Authentication required.")
     try:
-        payload=jwt.decode(authorization[7:],SECRET_KEY,algorithms=["HS256"])
+        payload=jwt.decode(token,SECRET_KEY,algorithms=["HS256"])
         user=db.get(User,int(payload["sub"]))
     except Exception: raise HTTPException(401,"Invalid or expired token.")
     if not user: raise HTTPException(401,"User not found.")
