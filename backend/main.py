@@ -6,7 +6,7 @@ import secrets
 from email import policy
 from email.parser import Parser
 from html.parser import HTMLParser
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode, quote
 import json
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
@@ -227,7 +227,7 @@ def _domain_age_signal(host: str):
         return {"status":"disabled"}
     try:
         request=urllib.request.Request(
-            f"https://rdap.org/domain/{host}",
+            f"https://rdap.org/domain/{quote(host,safe=".-")}",
             headers={"Accept":"application/rdap+json","User-Agent":"MailGuard-AI/4.0"},
             method="GET",
         )
