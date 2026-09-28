@@ -19,7 +19,8 @@ import joblib
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from .auth import User, Scan, OAuthIdentity, OAuthState, OAuthCode, get_db, current_user, make_token, hash_password, verify_password, valid_email
+from sqlalchemy import case, func
+from .auth import User, Scan, OAuthIdentity, OAuthState, OAuthCode, SESSION_COOKIE_NAME, get_db, current_user, make_token, hash_password, verify_password, valid_email
 
 ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
@@ -55,14 +56,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _set_session_cookies(response, token):
+    secure=ENVIRONMENT in {"production","prod"}
+    response.set_cookie(
+        SESSION_COOKIE_NAME, token, max_age=24*60*60, httponly=True,
+        secure=secure, samesite="lax", path="/"
+    )
+    response.set_cookie(
+        "mailguard_csrf", secrets.token_urlsafe(32), max_age=24*60*60,
+        httponly=False, secure=secure, samesite="lax", path="/"
+    )
+
+
+def _clear_session_cookies(response):
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie("mailguard_csrf", path="/")
+
+
+def _validate_csrf(request: Request):
+    if ENVIRONMENT not in {"production","prod"}:
+        return
+    if request.method in {"GET","HEAD","OPTIONS"}:
+        return
+    path=request.url.path
+    if path in {"/auth/register","/auth/login","/auth/oauth/exchange"}:
+        return
+    if request.cookies.get(SESSION_COOKIE_NAME):
+        cookie_token=request.cookies.get("mailguard_csrf","")
+        header_token=request.headers.get("X-CSRF-Token","")
+        if not cookie_token or not header_token or not secrets.compare_digest(cookie_token,header_token):
+            raise HTTPException(403,"CSRF validation failed.")
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     _rate_limit(request)
+    _validate_csrf(request)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Cache-Control"] = "no-store"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; connect-src 'self' https: http://localhost:8000; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     if ENVIRONMENT in {"production","prod"}:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -188,31 +224,6 @@ def _domain_age_signal(host: str):
     except Exception:
         return {"status":"unavailable"}
 
-def _virustotal_url_lookup(url: str):
-    api_key = os.getenv("VIRUSTOTAL_API_KEY")
-    if not api_key:
-        return {"status": "not_configured"}
-    try:
-        url_id = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
-        request = urllib.request.Request(
-            f"https://www.virustotal.com/api/v3/urls/{url_id}",
-            headers={"x-apikey": api_key, "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        attrs = data.get("data", {}).get("attributes", {})
-        stats = attrs.get("last_analysis_stats", {})
-        return {
-            "status": "found",
-            "malicious": int(stats.get("malicious", 0)),
-            "suspicious": int(stats.get("suspicious", 0)),
-            "harmless": int(stats.get("harmless", 0)),
-            "undetected": int(stats.get("undetected", 0)),
-            "reputation": attrs.get("reputation"),
-        }
-    except Exception:
-        return {"status": "unavailable"}
-
 def virustotal_url_lookup(url: str):
     """Optionally enrich URL analysis with VirusTotal reputation data.
 
@@ -263,7 +274,7 @@ def analyze_url_intelligence(url: str):
         elif reputation.get("suspicious", 0) > 0:
             signals.append({"severity":"medium","type":"external_reputation","detail":f"VirusTotal reports {reputation['suspicious']} suspicious engine result(s)."})
     score=min(100,sum(28 if s["severity"]=="high" else 12 for s in signals))
-    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":{**_domain_age_signal(host), **_domain_intelligence(host)},"reputation":reputation}
+    return {"url":url,"hostname":host,"risk_score":score,"risk_level":"high" if score>=70 else "medium" if score>=30 else "low","signals":signals,"domain_intelligence":domain_info,"reputation":reputation}
 
 def analyze_url(url):
     raw=url.strip()
@@ -316,7 +327,7 @@ def explain_prediction(text):
         return out
     except Exception: return []
 
-def classify(text, user_id=None, db=None):
+def classify(text, user_id=None, db=None, persist=True):
     if not model: raise HTTPException(503, "Model not found. Run: python ml/train.py")
     prediction=model.predict([text])[0]
     probs=model.predict_proba([text])[0]
@@ -332,8 +343,9 @@ def classify(text, user_id=None, db=None):
             "risk_level":"high" if risk_score>=75 else "medium" if risk_score>=40 else "low",
             "risk_score":risk_score,"risk_signals":signals,"url_analysis":urls,
             "explanation":explain_prediction(text)}
-    if user_id and db:
-        db.add(Scan(user_id=user_id,prediction=result["prediction"],risk_level=result["risk_level"],risk_score=result["risk_score"],spam_probability=result["spam_probability"],preview=text[:90].replace("\n"," "))); db.commit()
+    if user_id and db and persist:
+        db.add(Scan(user_id=user_id,prediction=result["prediction"],risk_level=result["risk_level"],risk_score=result["risk_score"],spam_probability=result["spam_probability"],preview=text[:90].replace("\n"," ")))
+        db.commit()
     return result
 
 
@@ -657,17 +669,31 @@ def register(request: AuthRequest, http_request: Request, db=Depends(get_db)):
     if not valid_email(email): raise HTTPException(400,"Enter a valid email.")
     if len(request.password)<8: raise HTTPException(400,"Password must be at least 8 characters.")
     if db.query(User).filter(User.email==email).first(): raise HTTPException(409,"Account already exists.")
-    user=User(email=email,password_hash=hash_password(request.password)); db.add(user); db.commit(); db.refresh(user)
-    return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
+    user=User(email=email,password_hash=hash_password(request.password))
+    db.add(user); db.commit(); db.refresh(user)
+    return {"created":True,"user":{"id":user.id,"email":user.email}}
+
 
 @app.post("/auth/login")
 def login(request: AuthRequest, http_request: Request, db=Depends(get_db)):
     _auth_rate_limit(http_request, request.email)
     user=db.query(User).filter(User.email==request.email.strip().lower()).first()
-    if not user or not verify_password(request.password,user.password_hash): raise HTTPException(401,"Invalid email or password.")
+    if not user or not verify_password(request.password,user.password_hash):
+        raise HTTPException(401,"Invalid email or password.")
     if user.password_hash.startswith("pbkdf2$"):
         user.password_hash=hash_password(request.password); db.commit()
-    return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
+    token=make_token(user)
+    response=JSONResponse({"authenticated":True,"user":{"id":user.id,"email":user.email}})
+    _set_session_cookies(response,token)
+    return response
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    response=JSONResponse({"logged_out":True})
+    _clear_session_cookies(response)
+    return response
+
 
 @app.get("/auth/me")
 def me(user: User=Depends(current_user)): return {"id":user.id,"email":user.email}
@@ -679,10 +705,16 @@ def analyze_url_endpoint(request: URLRequest):
 
 @app.get("/analytics")
 def analytics(user: User=Depends(current_user), db=Depends(get_db)):
-    scans=db.query(Scan).filter(Scan.user_id==user.id).order_by(Scan.id.desc()).all()
-    total=len(scans); spam=sum(x.prediction=="spam" for x in scans)
-    recent=[{"timestamp":x.timestamp.isoformat(),"prediction":x.prediction,"risk_level":x.risk_level,"risk_score":x.risk_score,"spam_probability":x.spam_probability,"preview":x.preview} for x in scans[:20]]
-    return {"total_scanned":total,"spam_detected":spam,"ham_detected":total-spam,"spam_rate":round(spam/total*100,2) if total else 0,"high_risk":sum(x.risk_level=="high" for x in scans),"medium_risk":sum(x.risk_level=="medium" for x in scans),"recent":recent}
+    total,spam,high,medium=db.query(
+        func.count(Scan.id),
+        func.coalesce(func.sum(case((Scan.prediction=="spam",1),else_=0)),0),
+        func.coalesce(func.sum(case((Scan.risk_level=="high",1),else_=0)),0),
+        func.coalesce(func.sum(case((Scan.risk_level=="medium",1),else_=0)),0),
+    ).filter(Scan.user_id==user.id).one()
+    recent=db.query(Scan).filter(Scan.user_id==user.id).order_by(Scan.id.desc()).limit(20).all()
+    total=int(total or 0); spam=int(spam or 0); high=int(high or 0); medium=int(medium or 0)
+    recent_payload=[{"id":x.id,"timestamp":x.timestamp.isoformat(),"prediction":x.prediction,"risk_level":x.risk_level,"risk_score":x.risk_score,"spam_probability":x.spam_probability,"preview":x.preview} for x in recent]
+    return {"total_scanned":total,"spam_detected":spam,"ham_detected":total-spam,"spam_rate":round(spam/total*100,2) if total else 0,"high_risk":high,"medium_risk":medium,"recent":recent_payload}
 
 @app.get("/health")
 def health(): return {"status":"ok","model_loaded":model is not None}
@@ -718,22 +750,46 @@ def model_info(): return {"model":"Logistic Regression","features":"Word + chara
 @app.post("/predict")
 def predict(request: EmailRequest,user: User=Depends(current_user),db=Depends(get_db)):
     if not request.text.strip(): raise HTTPException(400,"Email text cannot be empty.")
-    return classify(request.text,user.id,db)
+    result=classify(request.text,user.id,db,persist=False)
+    try:
+        db.add(Scan(user_id=user.id,prediction=result["prediction"],risk_level=result["risk_level"],risk_score=result["risk_score"],spam_probability=result["spam_probability"],preview=request.text[:90].replace("\n"," ")))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return result
+
 
 @app.post("/predict/batch")
 def predict_batch(request: BatchRequest,user: User=Depends(current_user),db=Depends(get_db)):
-    if not request.emails or len(request.emails)>500: raise HTTPException(400,"Provide between 1 and 500 emails.")
-    return {"count":len(request.emails),"results":[classify(x,user.id,db) for x in request.emails]}
+    emails=[x.strip() for x in request.emails if x and x.strip()]
+    if not emails or len(emails)>500: raise HTTPException(400,"Provide between 1 and 500 non-empty emails.")
+    results=[classify(x,user.id,db,persist=False) for x in emails]
+    scans=[Scan(user_id=user.id,prediction=r["prediction"],risk_level=r["risk_level"],risk_score=r["risk_score"],spam_probability=r["spam_probability"],preview=emails[i][:90].replace("\n"," ")) for i,r in enumerate(results)]
+    try:
+        db.add_all(scans)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"count":len(emails),"results":results}
+
 
 @app.post("/analyze/raw-email")
 def analyze_raw_email(request: RawEmailRequest,user: User=Depends(current_user),db=Depends(get_db)):
     if not request.raw_email.strip(): raise HTTPException(400,"Raw email cannot be empty.")
     parsed=parse_email(request.raw_email)
-    analysis=classify(parsed["body"] or request.raw_email,user.id,db)
+    analysis=classify(parsed["body"] or request.raw_email,user.id,db,persist=False)
     security=analyze_email_security(parsed, parsed["body"] or request.raw_email)
     security["html_analysis"]=analyze_html_links(parsed.get("html_body",""))
     security["attachment_analysis"]=parsed.get("attachments",{"count":0,"attachments":[]})
     security["unified_threat"]=build_unified_threat_assessment(analysis,security)
+    try:
+        db.add(Scan(user_id=user.id,prediction=analysis["prediction"],risk_level=analysis["risk_level"],risk_score=analysis["risk_score"],spam_probability=analysis["spam_probability"],preview=(parsed["body"] or request.raw_email)[:90].replace("\n"," ")))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return {"headers":{k:v for k,v in parsed.items() if k not in ("body","html_body","attachments")},"body_analysis":analysis,"email_security":security}
 
 
