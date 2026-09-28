@@ -363,52 +363,45 @@ export default function App() {
     window.addEventListener("hashchange", onHashChange);
 
     const params = new URLSearchParams(window.location.search);
-    const oauthCode = params.get("oauth_code");
     const oauthError = params.get("oauth_error");
-
-    if (oauthCode && !token) {
-      setLoading(true);
-      setError("");
-      setNotice("");
-      request("/auth/oauth/exchange", { code: oauthCode })
-        .then((data) => {
-          localStorage.setItem("mailguard_authenticated", "1");
-          setToken("session");
-          setUser(data.user || null);
-          window.history.replaceState(null, "", window.location.pathname + "#details");
-          setView("details");
-        })
-        .catch((err) => {
-          setError(err.message || "OAuth sign-in failed.");
-          window.history.replaceState(null, "", window.location.pathname);
-        })
-        .finally(() => setLoading(false));
-    } else if (oauthError) {
+    if (oauthError) {
       const provider = params.get("provider") || "provider";
+      const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
       const message = oauthError === "provider_not_configured"
-        ? provider + " SSO is not configured yet. Add the provider OAuth credentials on the backend."
-        : "Unable to complete " + provider + " sign-in (" + oauthError + ").";
+        ? providerName + " SSO is not configured yet. Add the provider OAuth credentials on the backend."
+        : "Unable to complete " + providerName + " sign-in.";
       setError(message);
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-
-    if (token) {
-      if (!window.location.hash || !["details", "scanner", "history", "mail-settings", "models"].includes(window.location.hash.slice(1))) {
-        window.location.hash = "details";
-      }
-      setView(viewFromHash());
-    } else if (!oauthCode) {
       window.history.replaceState(null, "", window.location.pathname + window.location.hash);
-      setView("scanner");
     }
 
+    async function restoreSession() {
+      try {
+        const data = await request("/auth/me", undefined, "GET");
+        localStorage.setItem("mailguard_authenticated", "1");
+        setToken("session");
+        setUser(data);
+        if (!window.location.hash || !["details", "scanner", "history", "mail-settings", "models"].includes(window.location.hash.slice(1))) {
+          window.location.hash = "details";
+        }
+        setView(viewFromHash());
+      } catch {
+        localStorage.removeItem("mailguard_authenticated");
+        setToken("");
+        setUser(null);
+        if (!window.location.hash || window.location.hash === "#details") {
+          setView("scanner");
+        }
+      }
+    }
+
+    restoreSession();
     checkBackend();
     const retry = window.setInterval(() => checkBackend({ silent: true }), 20000);
     return () => {
       window.removeEventListener("hashchange", onHashChange);
       window.clearInterval(retry);
     };
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     if (token && !user) loadProfile();
