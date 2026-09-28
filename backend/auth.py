@@ -2,7 +2,7 @@ import os, hashlib, secrets, re, time
 from datetime import datetime, timezone, timedelta
 import jwt
 from fastapi import Depends, Header, HTTPException
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, UniqueConstraint
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -44,6 +44,32 @@ class Scan(Base):
     risk_score=Column(Integer,nullable=False)
     spam_probability=Column(Float,nullable=False)
     preview=Column(Text,nullable=False)
+
+class OAuthIdentity(Base):
+    __tablename__="oauth_identities"
+    id=Column(Integer,primary_key=True)
+    provider=Column(String(32),nullable=False)
+    subject=Column(String(255),nullable=False)
+    email=Column(String(255),nullable=False,index=True)
+    user_id=Column(Integer,index=True,nullable=False)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("provider","subject",name="uq_oauth_provider_subject"),)
+
+class OAuthState(Base):
+    __tablename__="oauth_states"
+    id=Column(Integer,primary_key=True)
+    provider=Column(String(32),nullable=False,index=True)
+    state_hash=Column(String(64),unique=True,index=True,nullable=False)
+    expires_at=Column(DateTime,nullable=False)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class OAuthCode(Base):
+    __tablename__="oauth_codes"
+    id=Column(Integer,primary_key=True)
+    code_hash=Column(String(64),unique=True,index=True,nullable=False)
+    user_id=Column(Integer,index=True,nullable=False)
+    expires_at=Column(DateTime,nullable=False)
+    consumed_at=Column(DateTime,nullable=True)
 
 def _initialize_database():
     attempts=5
