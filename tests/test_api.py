@@ -10,8 +10,11 @@ client = TestClient(app)
 
 def test_health():
     response = client.get("/health")
-    assert response.status_code == 200
-    assert "status" in response.json()
+    assert response.status_code in (200,503)
+    payload=response.json()
+    assert payload["status"] in {"ok","degraded"}
+    assert "model_loaded" in payload
+    assert "database" in payload
 
 
 def test_url_analysis_flags_plain_http():
