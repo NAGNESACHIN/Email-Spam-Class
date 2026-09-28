@@ -437,3 +437,39 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   .setting-row select{min-width:150px}
   .capability-grid{grid-template-columns:1fr}
 }
+
+.provider-label{margin-top:20px;color:#63808e;font-size:8px;font-weight:800;letter-spacing:1.4px}
+.provider-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.provider-button{
+  min-height:48px;display:flex;align-items:center;gap:9px;text-align:left;
+  border:1px solid #1b3845;border-radius:11px;background:#07151d;color:#bfd0d7;
+  padding:8px 10px;cursor:pointer;transition:.18s ease
+}
+.provider-button:hover{border-color:#35696b;background:#0a1d26;transform:translateY(-1px)}
+.provider-button.active{border-color:#326e6e;background:#0d252a;box-shadow:inset 0 0 0 1px rgba(98,230,210,.06)}
+.provider-button>span:last-child{font-size:9px;font-weight:700;line-height:1.15}
+.provider-button small{display:block;color:#637d8a;font-size:7px;font-weight:500;margin-top:2px}
+.provider-icon{width:28px;height:28px;display:grid;place-items:center;flex:0 0 auto;border-radius:8px;font-family:"Space Grotesk";font-size:13px;font-weight:800}
+.provider-icon.google{background:#f1f5f7;color:#1a1f24}
+.provider-icon.yahoo{background:#45216b;color:#fff}
+.provider-icon.other{background:#123942;color:#70e4d2;font-family:monospace}
+.provider-icon.microsoft{display:grid;grid-template-columns:repeat(2,7px);grid-template-rows:repeat(2,7px);gap:2px;padding:6px}
+.provider-icon.microsoft i{display:block;width:7px;height:7px;background:#71aebc}
+.auth-divider{display:flex;align-items:center;gap:9px;margin:17px 0 0;color:#536e7b;font-size:8px;font-weight:800;letter-spacing:1px}
+.auth-divider::before,.auth-divider::after{content:"";height:1px;flex:1;background:#16313d}
+.password-field{position:relative}
+.password-field input{padding-right:43px}
+.password-toggle{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  width:34px;height:34px;border:0;border-radius:8px;
+  background:transparent;color:#71909d;cursor:pointer;font-size:15px;display:grid;place-items:center
+}
+.password-toggle:hover{color:var(--accent);background:#0b2028}
+.inline-success{
+  margin-top:12px;border:1px solid rgba(82,190,165,.35);
+  background:rgba(36,122,104,.14);color:#88e1cc;border-radius:10px;
+  padding:10px 11px;font-size:11px;line-height:1.45
+}
+@media(max-width:520px){
+  .provider-grid{grid-template-columns:1fr}
+}
