@@ -69,8 +69,15 @@ def _set_session_cookies(response, token):
 
 
 def _clear_session_cookies(response):
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
-    response.delete_cookie("mailguard_csrf", path="/")
+    secure=ENVIRONMENT in {"production","prod"}
+    response.set_cookie(
+        SESSION_COOKIE_NAME, "", max_age=0, expires=0, httponly=True,
+        secure=secure, samesite="lax", path="/"
+    )
+    response.set_cookie(
+        "mailguard_csrf", "", max_age=0, expires=0, httponly=False,
+        secure=secure, samesite="lax", path="/"
+    )
 
 
 def _validate_csrf(request: Request):
