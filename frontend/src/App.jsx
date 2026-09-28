@@ -236,6 +236,51 @@ export default function App() {
     }
   }
 
+  function parseCsvRows(source) {
+    const rows=[]; let row=[]; let field=""; let inQuotes=false;
+    for(let i=0;i<source.length;i+=1){
+      const ch=source[i];
+      if(inQuotes){
+        if(ch==='"'){
+          if(source[i+1]==='"'){ field+='"'; i+=1; } else { inQuotes=false; }
+        } else { field+=ch; }
+      } else if(ch==='"'){
+        inQuotes=true;
+      } else if(ch===','){
+        row.push(field); field="";
+      } else if(ch==='\n'){
+        row.push(field); field="";
+        if(row.some((cell)=>cell.trim())) rows.push(row);
+        row=[];
+      } else if(ch!=='\r'){
+        field+=ch;
+      }
+    }
+    if(field.length || row.length){
+      row.push(field);
+      if(row.some((cell)=>cell.trim())) rows.push(row);
+    }
+    if(inQuotes) throw new Error("CSV contains an unterminated quoted field.");
+    return rows;
+  }
+
+  function extractCsvEmails(source) {
+    const rows=parseCsvRows(source);
+    if(!rows.length) throw new Error("CSV file is empty.");
+    const normalized=rows[0].map((cell)=>cell.trim().toLowerCase());
+    const emailIndex=normalized.findIndex((cell)=>["email","text","message","body","content","email_text"].includes(cell));
+    const hasHeader=emailIndex>=0;
+    const dataRows=hasHeader ? rows.slice(1) : rows;
+    const index=hasHeader ? emailIndex : null;
+    const emails=dataRows.map((cells)=>{
+      if(index!==null) return cells[index] || "";
+      if(cells.length===1) return cells[0];
+      return cells.reduce((longest,current)=>current.length>longest.length?current:longest,"");
+    }).map((value)=>value.trim()).filter(Boolean);
+    if(emails.length>500) throw new Error("CSV contains more than 500 messages. Please upload a smaller batch.");
+    if(!emails.length) throw new Error("CSV contains no usable email/message text.");
+    return emails;
+  }
   async function analyzeFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -244,12 +289,8 @@ export default function App() {
     try {
       const contents = await file.text();
       if (file.name.toLowerCase().endsWith(".csv")) {
-        const rows = contents
-          .split(/\r?\n/)
-          .map((row) => row.trim())
-          .filter(Boolean);
-        const emails = rows[0]?.toLowerCase().includes("email") ? rows.slice(1) : rows;
-        const data = await request("/predict/batch", { emails });
+        const emails=extractCsvEmails(contents);
+        const data=await request("/predict/batch",{emails});
         setBatch(data.results || []);
         setHeader(null);
         setResult(null);
