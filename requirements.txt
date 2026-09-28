@@ -11,3 +11,4 @@ PyJWT
 psycopg2-binary
 psycopg[binary]>=3.2,<4
 argon2-cffi>=23.1,<26
+redis>=5,<7
