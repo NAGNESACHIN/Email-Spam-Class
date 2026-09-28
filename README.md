@@ -16,10 +16,10 @@ An explainable NLP-based email spam classification system using TF-IDF, Logistic
 - Raw `.eml` header, authentication, HTML link, and attachment analysis
 - URL risk intelligence, optional VirusTotal reputation, and lookalike-domain detection
 - Unified 0–100 email threat score
-- User authentication and personal scan history
+- User authentication with HttpOnly session cookies and personal scan history
 - Batch CSV scanning
 - Model comparison and evaluation dashboard
-- Docker deployment configuration
+- Docker deployment configuration with a separate ML builder stage
 
 ## Architecture
 
@@ -73,7 +73,7 @@ pip install -r requirements.txt
 python ml/train.py
 ```
 
-The training script downloads the UCI SMS Spam Collection, trains the model, prints accuracy/ROC-AUC/classification metrics, and saves `models/spam_classifier.joblib`.
+The training script downloads the UCI SMS Spam Collection, trains the model, prints accuracy/ROC-AUC/classification metrics, and saves `models/spam_classifier.joblib`. The Docker backend uses a dedicated model-builder stage so the training toolchain is not required in the runtime image.
 
 ### 4. Start the API
 
@@ -156,7 +156,7 @@ The initial training dataset is the UCI SMS Spam Collection. It is useful for es
 - [x] HTML phishing link mismatch and attachment-risk analysis
 - [x] Optional VirusTotal URL reputation integration
 - [x] Automated API/frontend test suite
-- [ ] Production deployment
+- [x] Production deployment configuration
 
 ## Advanced evaluation
 
@@ -174,6 +174,18 @@ python ml/train.py --email-dataset data/email_dataset.csv --group-column campaig
 
 The report records the split strategy. A grouped split is preferred when multiple messages can originate from the same campaign, sender batch, or template family.
 
+## Database migrations
+
+Alembic is included for reviewed schema evolution. The application still uses SQLAlchemy `create_all()` as a bootstrap for the current deployment, while Alembic revisions track changes that should be applied and reviewed explicitly.
+
+For a fresh database, run:
+
+```bash
+alembic upgrade head
+```
+
+For an existing database that was initialized by `create_all()`, first record the current baseline with `alembic stamp 0001_baseline`, then run `alembic upgrade head` for subsequent hardening migrations. Review database state before applying ownership constraints.
+
 ## Production security checklist
 
 - Set a unique 32+ character `JWT_SECRET` in production.
@@ -186,7 +198,7 @@ The report records the split strategy. A grouped split is preferred when multipl
 
 ## Production notes
 
-Set `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`, and `VITE_API_URL` through deployment secrets/environment variables. Do not commit `.env` files or production credentials. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
+Set `JWT_SECRET`, `DATABASE_URL`, and `CORS_ORIGINS` through deployment secrets/environment variables. Production Vercel uses the same-origin `/api` proxy, so `VITE_API_URL` is not required there. Do not commit `.env` files or production credentials. Authentication uses an HttpOnly, Secure, SameSite session cookie in production; the frontend only keeps a non-sensitive authenticated flag in local storage. The current ML baseline is trained on the UCI SMS Spam Collection and should not be presented as production-grade email-filtering performance until a representative labeled email corpus has been evaluated.
 
 
 ## Optional threat intelligence
