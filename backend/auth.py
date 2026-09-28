@@ -44,6 +44,7 @@ class Scan(Base):
     risk_score=Column(Integer,nullable=False)
     spam_probability=Column(Float,nullable=False)
     preview=Column(Text,nullable=False)
+    __table_args__=(Index("ix_scans_user_timestamp","user_id","timestamp"),)
 
 class OAuthIdentity(Base):
     __tablename__="oauth_identities"
