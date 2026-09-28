@@ -551,7 +551,7 @@ def _oauth_config(provider):
         cfg=dict(cfg)
         tenant=quote(cfg["tenant"],safe="-.")
         cfg["discovery"]=f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration"
-        if cfg["tenant"] not in {"common","organizations","consumers"}:
+        if re.fullmatch(r"[0-9a-fA-F-]{36}",cfg["tenant"]):
             cfg["expected_issuer"]=f"https://login.microsoftonline.com/{cfg['tenant']}/v2.0"
     return cfg
 
@@ -657,7 +657,7 @@ def _oidc_signing_key(provider,metadata,kid):
 
 def _expected_microsoft_issuer(claims,cfg,metadata):
     tid=str(claims.get("tid") or "").strip()
-    if not re.fullmatch(r"[0-9a-fA-F-]{8,64}",tid):
+    if not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",tid):
         raise ValueError("Microsoft token has an invalid tid.")
     if cfg.get("expected_issuer"):
         expected=cfg["expected_issuer"]
