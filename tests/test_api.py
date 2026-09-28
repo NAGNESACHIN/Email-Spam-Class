@@ -315,3 +315,68 @@ def test_legacy_oauth_code_exchange_endpoint_is_removed():
     with TestClient(app) as isolated:
         response=isolated.post("/auth/oauth/exchange", json={"code":"x"*32})
         assert response.status_code == 404
+
+
+def test_oidc_id_token_validation_checks_signature_and_claims(monkeypatch):
+    import time
+    import jwt
+    import backend.main as backend_main
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    private_key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
+    public_key=private_key.public_key()
+    monkeypatch.setattr(
+        backend_main,
+        "_oidc_signing_key",
+        lambda provider, metadata, kid: public_key,
+    )
+    cfg={"client_id":"mailguard-test-client","expected_issuer":"https://accounts.google.com"}
+    metadata={"issuer":"https://accounts.google.com"}
+    now=int(time.time())
+    token=jwt.encode(
+        {
+            "iss":"https://accounts.google.com",
+            "aud":"mailguard-test-client",
+            "sub":"google-sub-123",
+            "iat":now,
+            "exp":now+600,
+            "nonce":"nonce-123",
+            "email":"test@example.com",
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid":"test-kid"},
+    )
+
+    claims=backend_main._validate_id_token(
+        "google",token,cfg,metadata,"nonce-123"
+    )
+    assert claims["sub"]=="google-sub-123"
+
+    bad_audience=jwt.encode(
+        {
+            "iss":"https://accounts.google.com",
+            "aud":"other-client",
+            "sub":"google-sub-123",
+            "iat":now,
+            "exp":now+600,
+            "nonce":"nonce-123",
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid":"test-kid"},
+    )
+    try:
+        backend_main._validate_id_token("google",bad_audience,cfg,metadata,"nonce-123")
+        assert False, "invalid audience should be rejected"
+    except ValueError:
+        pass
+
+    # Ensure a provider-issued token signed by the right key still fails when
+    # the browser transaction nonce does not match.
+    try:
+        backend_main._validate_id_token("google",token,cfg,metadata,"wrong-nonce")
+        assert False, "invalid nonce should be rejected"
+    except ValueError:
+        pass
