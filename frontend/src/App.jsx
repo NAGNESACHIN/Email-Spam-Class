@@ -1,47 +1,833 @@
-import { useState, useEffect } from "react";
-const API_URL=import.meta.env.VITE_API_URL||"http://localhost:8000";
-const samples={spam:"Congratulations! You have won a FREE cash prize. Click http://bit.ly/reward now to claim your reward!",safe:"Hi team, the meeting has been moved to 3 PM tomorrow. Please review the attached agenda before the call."};
-export default function App(){
- const [token,setToken]=useState(localStorage.getItem("mailguard_token")||""),[authMode,setAuthMode]=useState("login"),[authEmail,setAuthEmail]=useState(""),[authPassword,setAuthPassword]=useState("");
- const [user,setUser]=useState(null),[view,setView]=useState("scanner");
- const [text,setText]=useState(""),[raw,setRaw]=useState(""),[result,setResult]=useState(null),[header,setHeader]=useState(null),[mode,setMode]=useState("message"),[loading,setLoading]=useState(false),[error,setError]=useState(""),[batch,setBatch]=useState([]),[url,setUrl]=useState(""),[urlResult,setUrlResult]=useState(null),[comparison,setComparison]=useState(null),[analytics,setAnalytics]=useState(null),[evaluationReports,setEvaluationReports]=useState(null);
- async function request(path,body){const r=await fetch(API_URL+path,{method:"POST",headers:{"Content-Type":"application/json",...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Analysis failed");return d}
- async function loadAnalytics(){try{const d=await fetch(API_URL+"/analytics",{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());setAnalytics(d)}catch(e){setError(e.message)}}
- async function loadEvaluationReports(){try{setEvaluationReports(await fetch(API_URL+"/evaluation-reports").then(r=>r.json()))}catch(e){setError(e.message)}}
- async function loadComparison(){try{setComparison(await fetch(API_URL+"/model-comparison").then(r=>r.json()))}catch(e){setError(e.message)}}
- async function logout(){localStorage.removeItem("mailguard_token");setToken("");setUser(null);setAnalytics(null);setResult(null);setHeader(null)}
- async function loadProfile(){if(!token)return;try{const d=await fetch(API_URL+"/auth/me",{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());if(d.email)setUser(d)}catch(e){logout()}}
- async function authenticate(){setLoading(true);setError("");try{const d=await request("/auth/"+authMode,{email:authEmail,password:authPassword});localStorage.setItem("mailguard_token",d.access_token);setToken(d.access_token)}catch(e){setError(e.message)}finally{setLoading(false)}}
- async function analyzeUrl(){if(!url.trim())return;setLoading(true);setError("");try{setUrlResult(await request("/analyze/url",{url}))}catch(e){setError(e.message)}finally{setLoading(false)}}
- async function analyze(){if(!text.trim())return;setLoading(true);setError("");try{setResult(await request("/predict",{text}));setHeader(null)}catch(e){setError(e.message+". Check that FastAPI is running.")}finally{setLoading(false)}}
- async function analyzeFile(e){const f=e.target.files?.[0];if(!f)return;setLoading(true);setError("");try{const v=await f.text();setRaw(v);setMode("raw");setHeader(await request("/analyze/raw-email",{raw_email:v}));setResult(null)}catch(e){setError(e.message)}finally{setLoading(false)}}
- async function analyzeBatch(e){const f=e.target.files?.[0];if(!f)return;setLoading(true);setError("");try{const rows=(await f.text()).split(/\r?\n/).map(v=>v.trim()).filter(Boolean);const emails=rows[0]?.toLowerCase().includes("email")?rows.slice(1):rows;setBatch((await request("/predict/batch",{emails})).results)}catch(e){setError(e.message)}finally{setLoading(false)}}
- async function analyzeRaw(){if(!raw.trim())return;setLoading(true);setError("");try{setHeader(await request("/analyze/raw-email",{raw_email:raw}));setResult(null)}catch(e){setError(e.message+". Check that FastAPI is running.")}finally{setLoading(false)}}
- const analysis=result||header?.body_analysis;
- useEffect(()=>{ if(token&&!user) loadProfile(); },[token]);
- return <main className="shell">
- <nav className="nav"><div className="brand"><span className="brand-mark">✉</span><span>MailGuard <b>AI</b></span></div><div className="nav-actions">{token&&<button onClick={()=>setView(view==="history"?"scanner":"history")} className="nav-btn">{view==="history"?"Scanner":"History"}</button>}{token&&<button onClick={logout} className="nav-btn">Logout</button>}<span className="status"><i/> {token?"Authenticated":"AI engine ready"}</span></div></nav>
- {!token&&<section className="card auth-panel"><div className="card-head"><div><h2>🔐 {authMode==="login"?"Sign in":"Create account"}</h2><p>Secure your personal scan history.</p></div><span className="pill">ACCOUNT</span></div><div className="auth-form"><input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="Email address"/><input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="Password (8+ characters)"/><button className="analyze" onClick={authenticate} disabled={loading||!authEmail||!authPassword}>{loading?"Please wait…":authMode==="login"?"Sign in":"Create account"}</button></div>{error&&<div className="error auth-error" role="alert">{error}</div>}<button className="auth-switch" onClick={()=>setAuthMode(authMode==="login"?"register":"login")}>{authMode==="login"?"Need an account? Create one":"Already have an account? Sign in"}</button></section>}
- {token&&view==="history"?<section className="card history-page"><div className="card-head"><div><h2>🗂 Personal Scan History</h2><p>Your authenticated prediction history.</p></div><button className="pill-button" onClick={loadAnalytics}>Refresh</button></div>{analytics?<><div className="analytics-grid"><div><small>TOTAL</small><b>{analytics.total_scanned}</b></div><div><small>SPAM</small><b>{analytics.spam_detected}</b></div><div><small>SPAM RATE</small><b>{analytics.spam_rate}%</b></div><div><small>HIGH RISK</small><b>{analytics.high_risk}</b></div></div><div className="recent-list">{analytics.recent.map((x,i)=><div className="recent-row" key={i}><span>{new Date(x.timestamp).toLocaleString()}</span><b className={x.prediction}>{x.prediction==="spam"?"SPAM":"SAFE"}</b><span>{x.risk_score}/100</span><p>{x.preview}</p></div>)}</div></>:<div className="empty-mini">Click Refresh to load your history.</div>}</section>:<section className="hero"><div className="eyebrow">INTELLIGENT EMAIL SECURITY</div><h1>Know what’s in your inbox<br/><span>before you click.</span></h1><p>Analyze message content or inspect raw email headers, authentication results, URLs, and model evidence.</p></section>}
- {!token&&<div className="login-hint">Sign in to save scans to your personal history.</div>}
- {token&&view==="scanner"&&<div className="tabs"><button className={mode==="message"?"active":""} onClick={()=>{setMode("message");setError("")}}>Message scanner</button><button className={mode==="raw"?"active":""} onClick={()=>{setMode("raw");setError("")}}>Raw email analyzer</button></div>}
-  {token&&view==="scanner"&&<><section className="card evaluation-card"><div className="card-head"><div><h2>📚 Benchmark Reports</h2><p>Compare the baseline and email-domain evaluation runs.</p></div><button className="pill-button" onClick={loadEvaluationReports}>Refresh reports</button></div>{evaluationReports?.reports ? <div className="benchmark-list">{Object.entries(evaluationReports.reports).map(([key,r])=><div className="benchmark" key={key}><div><h3>{key.replaceAll("_"," ")}</h3><small>{r.dataset||"Evaluation report"}</small></div><div className="benchmark-metrics"><span>Accuracy<b>{((r.accuracy??0)*100).toFixed(1)}%</b></span><span>F1<b>{((r.f1??0)*100).toFixed(1)}%</b></span><span>ROC-AUC<b>{((r.roc_auc??0)*100).toFixed(1)}%</b></span></div></div>)}</div> : <div className="empty-mini">Run an evaluation command, then refresh reports.</div>}</section><section className="card evaluation-card"><div className="card-head"><div><h2>🧪 ML Evaluation</h2><p>Detailed error analysis across the trained classifiers.</p></div><button className="pill-button" onClick={loadComparison}>Refresh metrics</button></div>{comparison?.metrics?.length ? <div className="eval-models">{comparison.metrics.map(m=><div className="eval-model" key={m.model}><h3>{m.model}</h3><div className="metric-grid"><span>Accuracy<b>{(m.accuracy*100).toFixed(1)}%</b></span><span>Precision<b>{(m.precision*100).toFixed(1)}%</b></span><span>Recall<b>{(m.recall*100).toFixed(1)}%</b></span><span>F1<b>{(m.f1*100).toFixed(1)}%</b></span><span>ROC-AUC<b>{(m.roc_auc*100).toFixed(1)}%</b></span><span>FP Rate<b>{(m.false_positive_rate_percent??m.false_positive_rate*100).toFixed(1)}%</b></span><span>FN Rate<b>{(m.false_negative_rate_percent??m.false_negative_rate*100).toFixed(1)}%</b></span></div><div className="confusion"><div><b>{m.true_negative}</b><small>True Negative</small></div><div><b>{m.false_positive}</b><small>False Positive</small></div><div><b>{m.false_negative}</b><small>False Negative</small></div><div><b>{m.true_positive}</b><small>True Positive</small></div></div></div>)}</div> : <div className="empty-mini">Run <code>python ml/train.py</code> first, then refresh metrics.</div>}</section></>}
- <section className="card phishing-card"><div className="card-head"><div><h2>🛡️ Phishing Intelligence</h2><p>Sender identity, authentication and impersonation signals.</p></div></div>{header?.email_security ? <div><div className="phish-score"><span>UNIFIED THREAT SCORE</span><strong>{header.email_security.unified_threat?.threat_score ?? header.email_security.threat_score}/100</strong><em>{(header.email_security.unified_threat?.risk_level ?? header.email_security.security_risk).toUpperCase()} · {(header.email_security.unified_threat?.signal_count ?? header.email_security.risk_signal_count)} signal(s)</em></div><div className="unified-breakdown"><div><small>ML risk</small><b>{header.email_security.unified_threat?.model_risk_score ?? "—"}</b></div><div><small>Security heuristics</small><b>{header.email_security.unified_threat?.security_heuristic_score ?? "—"}</b></div><div><small>High signals</small><b>{header.email_security.unified_threat?.high_signals ?? header.email_security.high_signals}</b></div><div><small>Medium signals</small><b>{header.email_security.unified_threat?.medium_signals ?? header.email_security.medium_signals}</b></div></div><div className="threat-decision"><div><small>Decision</small><strong>{(header.email_security.unified_threat?.risk_level ?? header.email_security.security_risk).toUpperCase()} RISK</strong></div><p>{header.email_security.unified_threat?.recommendation || "Review the sender, authentication results, links and attachments before interacting."}</p></div><div className="security-grid"><div><small>Sender domain</small><b>{header.email_security.sender_domain||"Unknown"}</b></div><div><small>Reply-To domain</small><b>{header.email_security.reply_to_domain||"Not provided"}</b></div><div><small>Return-Path domain</small><b>{header.email_security.return_path_domain||"Not provided"}</b></div><div><small>Lookalike domains</small><b>{header.email_security.lookalike_domains?.length||0}</b></div></div>{header.email_security.signals?.length ? <div className="signal-list">{header.email_security.signals.map((s,i)=><div className="signal-item" key={i}><b>{s.type.replaceAll("_"," ")}</b><span>{s.detail}</span></div>)}</div> : <div className="empty-mini">No phishing signals detected by the heuristic layer.</div>}<div className="intel-panel"><h3>Domain intelligence</h3><p>{header.email_security?.unified_threat?.domain_intelligence?.hostname || "Sender domain heuristics"}</p><div className="signal-item"><b>{header.email_security?.unified_threat?.domain_intelligence?.is_disposable ? "Disposable domain" : "No disposable-domain flag"}</b><span>{header.email_security?.unified_threat?.domain_intelligence?.is_free_email ? "Free-mail provider" : "Not a known free-mail provider"}</span></div>{header.email_security?.unified_threat?.domain_intelligence?.registration?.status === "available" ? <div className="signal-item"><b>RDAP registration</b><span>{header.email_security.unified_threat.domain_intelligence.registration.age_signal?.replaceAll("_"," ") || "Registration data available"}{header.email_security.unified_threat.domain_intelligence.registration.created ? " · created "+new Date(header.email_security.unified_threat.domain_intelligence.registration.created).toLocaleDateString() : ""}</span></div> : null}</div><div className="intel-grid"><div className="intel-panel"><h3>HTML link analysis</h3><p>{header.email_security.html_analysis?.link_count??0} HTML link(s) inspected</p>{header.email_security.html_analysis?.mismatches?.length ? header.email_security.html_analysis.mismatches.map((x,i)=><div className="signal-item" key={i}><b>Destination mismatch</b><span>{x.visible_host} → {x.destination_host}</span></div>) : <div className="empty-mini">No visible-link destination mismatches detected.</div>}</div><div className="intel-panel"><h3>Attachments</h3><p>{header.email_security.attachment_analysis?.count??0} attachment(s) inspected</p>{header.email_security.attachment_analysis?.attachments?.length ? header.email_security.attachment_analysis.attachments.map((a,i)=><div className="signal-item" key={i}><b>{a.filename}</b><span>{a.content_type} · {(a.size_bytes/1024).toFixed(1)} KB {a.signals?.length ? "· "+a.signals.map(s=>s.type.replaceAll("_"," ")).join(", ") : "· No heuristic flags"}</span></div>) : <div className="empty-mini">No attachments detected.</div>}</div></div></div> : <div className="empty-mini">Analyze a raw .eml message to generate phishing intelligence.</div>}</section><section className="url-panel card"><div className="card-head"><div><h2>🔗 URL Intelligence</h2><p>Inspect a link for common phishing characteristics before opening it.</p></div><span className="pill">URL</span></div><div className="url-form"><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://example.com/login"/><button className="analyze" onClick={analyzeUrl} disabled={loading||!url.trim()}>{loading?"Checking…":"Analyze URL →"}</button></div>{urlResult&&<div className="url-report"><div><strong>{urlResult.risk_score}/100</strong><small>{urlResult.risk_level.toUpperCase()} RISK</small></div><div><b>{urlResult.hostname||"Unknown host"}</b><p>{urlResult.signals?.length?urlResult.signals.map(s=>s.detail).join(" · "):"No obvious structural red flags detected."}</p><small>Reputation: {urlResult.reputation?.status==="available" ? `${urlResult.reputation.malicious||0} malicious · ${urlResult.reputation.suspicious||0} suspicious` : "local heuristics only"}</small></div></div>}</section>
- {token&&view==="scanner"&&<section className="workspace">
- <div className="card composer"><div className="card-head"><div><h2>{mode==="message"?"Analyze an email":"Inspect raw email"}</h2><p>{mode==="message"?"Paste message content below.":"Paste a complete .eml / raw email with headers."}</p></div><span className="pill">{mode==="message"?"NLP":"HEADERS"}</span></div>
-  <textarea value={mode==="message"?text:raw} onChange={e=>mode==="message"?setText(e.target.value):setRaw(e.target.value)} placeholder={mode==="message"?"Paste an email, SMS, or message here...":`From: sender@example.com\nReply-To: ...\nAuthentication-Results: ...\nSubject: ...\n\nEmail body...`} />
- {mode==="message"&&<div className="samples"><span>Try a sample:</span><button onClick={()=>setText(samples.spam)}>Spam</button><button onClick={()=>setText(samples.safe)}>Safe</button></div>}
- <button className="analyze" onClick={mode==="message"?analyze:analyzeRaw} disabled={loading||!(mode==="message"?text:raw).trim()}>{loading?"Analyzing…":mode==="message"?"Analyze message →":"Inspect email →"}</button>{error&&<div className="error">{error}</div>}
- </div>
- <div className="card result">{!analysis?<div className="empty"><div className="shield">◈</div><h2>Your security report</h2><p>Results will include classification, risk, URLs, explanations, and email authentication.</p></div>:
- <><div className="card-head"><div><h2>Security analysis</h2><p>Prediction, risk score and security intelligence.</p></div><span className={`badge ${analysis.prediction}`}>{analysis.label}</span></div>
- <div className="score"><div><small>RISK SCORE</small><strong>{analysis.risk_score}<em>/100</em></strong></div><div className={`risk ${analysis.risk_level}`}>{analysis.risk_level.toUpperCase()} RISK</div></div>
- <div className="meter"><span style={{width:`${analysis.risk_score}%`}}/></div>
- <div className="stats"><div><small>SPAM PROBABILITY</small><b>{analysis.spam_probability}%</b></div><div><small>CONFIDENCE</small><b>{analysis.confidence}%</b></div><div><small>URLS FOUND</small><b>{analysis.url_analysis?.url_count??0}</b></div></div>
- {header&&<><div className="signals"><h3>Email identity</h3><div className="header-grid"><span>From</span><b>{header.headers.from||"—"}</b><span>Reply-To</span><b>{header.headers.reply_to||"—"}</b><span>Subject</span><b>{header.headers.subject||"—"}</b><span>Received hops</span><b>{header.headers.received_hops}</b></div></div><div className="signals"><h3>Authentication</h3><div className="auth-grid">{["spf","dkim","dmarc"].map(k=><div className={`auth ${header.headers.authentication[k]==="pass"?"pass":"unknown"}`} key={k}><small>{k.toUpperCase()}</small><b>{header.headers.authentication[k]}</b></div>)}</div></div></>}
- <div className="signals"><h3>Risk signals</h3>{analysis.risk_signals.length?analysis.risk_signals.map((s,i)=><div className="signal" key={i}><span>!</span>{s}</div>):<div className="signal safe-signal"><span>✓</span>No obvious risk signals detected.</div>}</div>
- {analysis.explanation?.length>0&&<div className="signals explanation"><h3>Why the model decided this</h3><div className="evidence">{analysis.explanation.map((x,i)=><div className="evidence-item" key={i}><span>{x.impact>=0?"+":"−"}</span><b>{x.term}</b><small>{x.impact>=0?"toward spam":"away from spam"}</small></div>)}</div></div>}
- {analysis.url_analysis?.suspicious_urls?.length>0&&<div className="signals urls"><h3>Suspicious URLs</h3>{analysis.url_analysis.suspicious_urls.map((u,i)=><div className="signal" key={i}><span>↗</span><div><b>{u.url}</b><small>{u.reasons.join(" · ")}</small></div></div>)}</div>}
- </>}</div></section>}
- <footer>MailGuard AI · Explainable NLP email security · v3.6</footer></main>
+import { useEffect, useMemo, useState } from "react";
+
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\\/+$/, "");
+
+const samples = {
+  spam: "Congratulations! You have won a FREE cash prize. Click http://bit.ly/reward now to claim your reward!",
+  safe: "Hi team, the meeting has been moved to 3 PM tomorrow. Please review the attached agenda before the call.",
+};
+
+const navItems = [
+  { id: "scanner", label: "Scanner", icon: "✦" },
+  { id: "history", label: "History", icon: "◷" },
+  { id: "models", label: "Models", icon: "◒" },
+];
+
+function viewFromHash() {
+  const value = window.location.hash.replace("#", "");
+  return ["scanner", "history", "models"].includes(value) ? value : "scanner";
+}
+
+function formatPercent(value) {
+  return `${((value ?? 0) * 100).toFixed(1)}%`;
+}
+
+function riskClass(value) {
+  return value === "high" ? "risk-high" : value === "medium" ? "risk-medium" : "risk-low";
+}
+
+export default function App() {
+  const [token, setToken] = useState(localStorage.getItem("mailguard_token") || "");
+  const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [view, setView] = useState(viewFromHash());
+
+  const [text, setText] = useState("");
+  const [raw, setRaw] = useState("");
+  const [mode, setMode] = useState("message");
+  const [result, setResult] = useState(null);
+  const [header, setHeader] = useState(null);
+  const [url, setUrl] = useState("");
+  const [urlResult, setUrlResult] = useState(null);
+  const [batch, setBatch] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
+  const [comparison, setComparison] = useState(null);
+  const [evaluationReports, setEvaluationReports] = useState(null);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [backendStatus, setBackendStatus] = useState("checking");
+  const [modelLoaded, setModelLoaded] = useState(false);
+
+  const analysis = result || header?.body_analysis;
+  const security = header?.email_security;
+
+  function navigate(next) {
+    window.location.hash = next;
+    setView(next);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function request(path, body, method = "POST") {
+    const response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: {
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.detail || `Request failed (${response.status})`);
+    }
+    return data;
+  }
+
+  async function checkBackend() {
+    setBackendStatus("checking");
+    try {
+      const data = await request("/health", undefined, "GET");
+      setBackendStatus(data?.status === "ok" ? "online" : "offline");
+      setModelLoaded(Boolean(data?.model_loaded));
+    } catch {
+      setBackendStatus("offline");
+      setModelLoaded(false);
+    }
+  }
+
+  async function loadProfile() {
+    if (!token) return;
+    try {
+      const data = await request("/auth/me", undefined, "GET");
+      setUser(data);
+    } catch {
+      logout();
+    }
+  }
+
+  async function authenticate() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await request(`/auth/${authMode}`, {
+        email: authEmail,
+        password: authPassword,
+      });
+      localStorage.setItem("mailguard_token", data.access_token);
+      setToken(data.access_token);
+      setUser(data.user || null);
+      setAuthPassword("");
+      navigate("scanner");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem("mailguard_token");
+    setToken("");
+    setUser(null);
+    setAnalytics(null);
+    setResult(null);
+    setHeader(null);
+    setBatch([]);
+    setAuthMode("login");
+    navigate("scanner");
+  }
+
+  async function analyze() {
+    if (!text.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      setResult(await request("/predict", { text }));
+      setHeader(null);
+    } catch (err) {
+      setError(`${err.message}. Check that the API is online.`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function analyzeRaw() {
+    if (!raw.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      setHeader(await request("/analyze/raw-email", { raw_email: raw }));
+      setResult(null);
+    } catch (err) {
+      setError(`${err.message}. Check that the API is online.`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function analyzeFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    setError("");
+    try {
+      const contents = await file.text();
+      if (file.name.toLowerCase().endsWith(".csv")) {
+        const rows = contents
+          .split(/\r?\n/)
+          .map((row) => row.trim())
+          .filter(Boolean);
+        const emails = rows[0]?.toLowerCase().includes("email") ? rows.slice(1) : rows;
+        const data = await request("/predict/batch", { emails });
+        setBatch(data.results || []);
+        setHeader(null);
+        setResult(null);
+      } else {
+        setRaw(contents);
+        setMode("raw");
+        setHeader(await request("/analyze/raw-email", { raw_email: contents }));
+        setResult(null);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+      event.target.value = "";
+    }
+  }
+
+  async function analyzeUrl() {
+    if (!url.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      setUrlResult(await request("/analyze/url", { url }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadAnalytics() {
+    setLoading(true);
+    setError("");
+    try {
+      setAnalytics(await request("/analytics", undefined, "GET"));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadComparison() {
+    setLoading(true);
+    try {
+      setComparison(await request("/model-comparison", undefined, "GET"));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadEvaluationReports() {
+    setLoading(true);
+    try {
+      setEvaluationReports(await request("/evaluation-reports", undefined, "GET"));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const onHashChange = () => setView(viewFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    if (!window.location.hash) window.location.hash = "scanner";
+    checkBackend();
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (token && !user) loadProfile();
+  }, [token]);
+
+  useEffect(() => {
+    if (view === "history" && token && !analytics) loadAnalytics();
+    if (view === "models" && token && !comparison && !evaluationReports) {
+      Promise.all([loadComparison(), loadEvaluationReports()]);
+    }
+  }, [view, token]);
+
+  const authSubtitle = authMode === "login"
+    ? "Access your secure personal scan history."
+    : "Create an account to save and review your scans.";
+
+  const backendLabel = useMemo(() => {
+    if (backendStatus === "online") return modelLoaded ? "API online · model loaded" : "API online · model unavailable";
+    if (backendStatus === "checking") return "Checking API…";
+    return "API offline";
+  }, [backendStatus, modelLoaded]);
+
+  return (
+    <main className="app-shell">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+
+      <nav className="topbar">
+        <button className="brand" onClick={() => navigate("scanner")} aria-label="MailGuard AI home">
+          <span className="brand-icon">✉</span>
+          <span>MailGuard <b>AI</b></span>
+        </button>
+
+        <div className="topbar-right">
+          <div className={`api-status ${backendStatus}`}>
+            <span className="status-dot" />
+            {backendLabel}
+          </div>
+
+          {token && (
+            <>
+              <div className="nav-links">
+                {navItems.map((item) => (
+                  <button
+                    key={item.id}
+                    className={view === item.id ? "nav-link active" : "nav-link"}
+                    onClick={() => navigate(item.id)}
+                  >
+                    <span>{item.icon}</span>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <button className="ghost-button" onClick={logout}>Logout</button>
+            </>
+          )}
+        </div>
+      </nav>
+
+      {!token ? (
+        <section className="landing">
+          <div className="landing-copy">
+            <span className="eyebrow">AI-POWERED EMAIL SECURITY</span>
+            <h1>Understand every message <span>before you click.</span></h1>
+            <p>
+              MailGuard AI combines explainable spam classification with phishing,
+              URL, sender-identity, authentication, and attachment intelligence.
+            </p>
+
+            <div className="landing-actions">
+              <button className="primary-button" onClick={() => document.querySelector(".auth-card")?.scrollIntoView({ behavior: "smooth" })}>
+                Get started <span>↓</span>
+              </button>
+              <button className="secondary-button" onClick={checkBackend}>Check system</button>
+            </div>
+
+            <div className="feature-grid">
+              <div className="feature-card">
+                <span>01</span>
+                <strong>Spam detection</strong>
+                <p>Word + character TF-IDF with logistic regression.</p>
+              </div>
+              <div className="feature-card">
+                <span>02</span>
+                <strong>Phishing intelligence</strong>
+                <p>Identity, authentication, lookalike, and link signals.</p>
+              </div>
+              <div className="feature-card">
+                <span>03</span>
+                <strong>URL intelligence</strong>
+                <p>Structural risk checks and optional reputation enrichment.</p>
+              </div>
+              <div className="feature-card">
+                <span>04</span>
+                <strong>Explainable AI</strong>
+                <p>See the evidence that contributed to the model decision.</p>
+              </div>
+            </div>
+          </div>
+
+          <section className="auth-card card">
+            <div className="card-kicker">SECURE ACCESS</div>
+            <h2>{authMode === "login" ? "Welcome back" : "Create your account"}</h2>
+            <p>{authSubtitle}</p>
+
+            <label className="field">
+              <span>Email address</span>
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+            </label>
+
+            <label className="field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="8+ characters"
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && authEmail && authPassword) authenticate();
+                }}
+              />
+            </label>
+
+            {error && <div className="inline-error" role="alert">{error}</div>}
+
+            <button
+              className="primary-button full"
+              onClick={authenticate}
+              disabled={loading || !authEmail || !authPassword}
+            >
+              {loading ? "Working…" : authMode === "login" ? "Sign in" : "Create account"}
+            </button>
+
+            <button
+              className="switch-button"
+              onClick={() => {
+                setError("");
+                setAuthMode(authMode === "login" ? "register" : "login");
+              }}
+            >
+              {authMode === "login" ? "Need an account? Create one" : "Already have an account? Sign in"}
+            </button>
+          </section>
+        </section>
+      ) : (
+        <>
+          {view === "scanner" && (
+            <>
+              <section className="dashboard-header">
+                <div>
+                  <span className="eyebrow">MAILGUARD WORKSPACE</span>
+                  <h1>Security scanner</h1>
+                  <p>Analyze messages, inspect raw emails, and investigate suspicious links.</p>
+                </div>
+                <div className="user-chip">
+                  <span>{user?.email?.slice(0, 1).toUpperCase() || "U"}</span>
+                  <div>
+                    <small>Signed in as</small>
+                    <strong>{user?.email || "Authenticated user"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <div className="workspace-grid">
+                <section className="card composer-card">
+                  <div className="card-head">
+                    <div>
+                      <div className="card-kicker">ANALYSIS MODE</div>
+                      <h2>{mode === "message" ? "Message scanner" : "Raw email analyzer"}</h2>
+                      <p>{mode === "message" ? "Paste message text and inspect the model decision." : "Paste a complete .eml message with headers, body, and optional attachments."}</p>
+                    </div>
+                    <span className="mode-pill">{mode === "message" ? "NLP" : "RAW .EML"}</span>
+                  </div>
+
+                  <div className="mode-tabs">
+                    <button className={mode === "message" ? "active" : ""} onClick={() => { setMode("message"); setError(""); }}>
+                      Message
+                    </button>
+                    <button className={mode === "raw" ? "active" : ""} onClick={() => { setMode("raw"); setError(""); }}>
+                      Raw email
+                    </button>
+                  </div>
+
+                  <textarea
+                    value={mode === "message" ? text : raw}
+                    onChange={(event) => mode === "message" ? setText(event.target.value) : setRaw(event.target.value)}
+                    placeholder={mode === "message" ? "Paste an email, SMS, or message here…" : "From: sender@example.com\nReply-To: …\nAuthentication-Results: …\nSubject: …\n\nEmail body…"}
+                  />
+
+                  <div className="composer-toolbar">
+                    {mode === "message" ? (
+                      <div className="sample-actions">
+                        <span>Quick samples</span>
+                        <button onClick={() => setText(samples.spam)}>Spam</button>
+                        <button onClick={() => setText(samples.safe)}>Safe</button>
+                      </div>
+                    ) : (
+                      <div className="sample-actions">
+                        <span>Import</span>
+                        <label className="file-button">
+                          .eml / .txt
+                          <input type="file" accept=".eml,.txt,text/plain,message/rfc822" onChange={analyzeFile} />
+                        </label>
+                      </div>
+                    )}
+
+                    <label className="file-button secondary-file">
+                      CSV batch
+                      <input type="file" accept=".csv,text/csv" onChange={analyzeFile} />
+                    </label>
+                  </div>
+
+                  {error && <div className="inline-error" role="alert">{error}</div>}
+
+                  <button
+                    className="primary-button full"
+                    onClick={mode === "message" ? analyze : analyzeRaw}
+                    disabled={loading || !(mode === "message" ? text : raw).trim()}
+                  >
+                    {loading ? "Analyzing…" : mode === "message" ? "Analyze message →" : "Inspect raw email →"}
+                  </button>
+                </section>
+
+                <section className="card result-card">
+                  <div className="card-head">
+                    <div>
+                      <div className="card-kicker">AI RESULT</div>
+                      <h2>Security report</h2>
+                      <p>Classification, confidence, risk, and supporting evidence.</p>
+                    </div>
+                    {analysis && <span className={`result-badge ${analysis.prediction}`}>{analysis.label}</span>}
+                  </div>
+
+                  {!analysis ? (
+                    <div className="empty-state">
+                      <div className="empty-icon">◈</div>
+                      <h3>Ready for analysis</h3>
+                      <p>Run a scan to populate your security report and model evidence.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="score-row">
+                        <div>
+                          <span>RISK SCORE</span>
+                          <strong>{analysis.risk_score}<em>/100</em></strong>
+                        </div>
+                        <span className={`risk-label ${riskClass(analysis.risk_level)}`}>
+                          {analysis.risk_level.toUpperCase()} RISK
+                        </span>
+                      </div>
+
+                      <div className="score-track"><span style={{ width: `${analysis.risk_score}%` }} /></div>
+
+                      <div className="metric-strip">
+                        <div><span>Spam probability</span><strong>{analysis.spam_probability}%</strong></div>
+                        <div><span>Confidence</span><strong>{analysis.confidence}%</strong></div>
+                        <div><span>URLs found</span><strong>{analysis.url_analysis?.url_count ?? 0}</strong></div>
+                      </div>
+
+                      {analysis.risk_signals?.length > 0 && (
+                        <div className="report-section">
+                          <div className="section-title">Risk signals</div>
+                          <div className="signal-list compact">
+                            {analysis.risk_signals.map((signal, index) => (
+                              <div className="signal-row" key={index}>
+                                <span className="signal-marker">!</span>
+                                <span>{signal}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {analysis.explanation?.length > 0 && (
+                        <div className="report-section">
+                          <div className="section-title">Why the model decided this</div>
+                          <div className="evidence-list">
+                            {analysis.explanation.map((item, index) => (
+                              <div className="evidence-row" key={index}>
+                                <span className={item.impact >= 0 ? "evidence-positive" : "evidence-negative"}>
+                                  {item.impact >= 0 ? "+" : "−"}
+                                </span>
+                                <strong>{item.term}</strong>
+                                <small>{item.impact >= 0 ? "toward spam" : "away from spam"}</small>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              </div>
+
+              {batch.length > 0 && (
+                <section className="card section-card">
+                  <div className="section-heading">
+                    <div>
+                      <div className="card-kicker">BATCH ANALYSIS</div>
+                      <h2>CSV scan results</h2>
+                    </div>
+                    <span className="count-pill">{batch.length} messages</span>
+                  </div>
+                  <div className="batch-table">
+                    {batch.map((item, index) => (
+                      <div className="batch-row" key={index}>
+                        <span>{index + 1}</span>
+                        <strong className={item.prediction}>{item.label}</strong>
+                        <p>{item.risk_signals?.[0] || "No obvious heuristic signals."}</p>
+                        <span>{item.risk_score}/100</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="card section-card">
+                <div className="section-heading">
+                  <div>
+                    <div className="card-kicker">LINK ANALYSIS</div>
+                    <h2>URL intelligence</h2>
+                    <p>Inspect structural phishing indicators without opening the link.</p>
+                  </div>
+                  {urlResult && <span className={`count-pill ${riskClass(urlResult.risk_level)}`}>{urlResult.risk_level.toUpperCase()}</span>}
+                </div>
+
+                <div className="url-form">
+                  <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/login" />
+                  <button className="primary-button" onClick={analyzeUrl} disabled={loading || !url.trim()}>
+                    {loading ? "Checking…" : "Analyze URL"}
+                  </button>
+                </div>
+
+                {urlResult && (
+                  <div className="url-result">
+                    <div className="url-score">
+                      <strong>{urlResult.risk_score}</strong>
+                      <span>/100</span>
+                    </div>
+                    <div>
+                      <strong className="breakable">{urlResult.hostname || "Unknown host"}</strong>
+                      <p>{urlResult.signals?.length ? urlResult.signals.map((signal) => signal.detail).join(" · ") : "No obvious structural red flags detected."}</p>
+                      <small>
+                        Reputation: {urlResult.reputation?.status === "available"
+                          ? `${urlResult.reputation.malicious || 0} malicious · ${urlResult.reputation.suspicious || 0} suspicious`
+                          : "local heuristics only"}
+                      </small>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {security && (
+                <section className="card section-card">
+                  <div className="section-heading">
+                    <div>
+                      <div className="card-kicker">RAW EMAIL SECURITY</div>
+                      <h2>Phishing intelligence</h2>
+                      <p>Identity, authentication, HTML links, domain signals, and attachments.</p>
+                    </div>
+                    <span className={`count-pill ${riskClass(security.unified_threat?.risk_level)}`}>
+                      {security.unified_threat?.threat_score ?? security.threat_score}/100
+                    </span>
+                  </div>
+
+                  <div className="threat-grid">
+                    <div><span>Unified threat</span><strong>{security.unified_threat?.threat_score ?? "—"}</strong></div>
+                    <div><span>ML risk</span><strong>{security.unified_threat?.model_risk_score ?? "—"}</strong></div>
+                    <div><span>Security heuristics</span><strong>{security.unified_threat?.security_heuristic_score ?? "—"}</strong></div>
+                    <div><span>Signals</span><strong>{security.unified_threat?.signal_count ?? security.risk_signal_count}</strong></div>
+                  </div>
+
+                  <div className="identity-grid">
+                    <div><span>Sender domain</span><strong>{security.sender_domain || "Unknown"}</strong></div>
+                    <div><span>Reply-To</span><strong>{security.reply_to_domain || "Not provided"}</strong></div>
+                    <div><span>Return-Path</span><strong>{security.return_path_domain || "Not provided"}</strong></div>
+                    <div><span>Lookalike domains</span><strong>{security.lookalike_domains?.length || 0}</strong></div>
+                  </div>
+
+                  {security.signals?.length > 0 && (
+                    <div className="report-section">
+                      <div className="section-title">Security signals</div>
+                      <div className="signal-list">
+                        {security.signals.map((signal, index) => (
+                          <div className="intel-row" key={index}>
+                            <strong>{signal.type?.replaceAll("_", " ")}</strong>
+                            <span>{signal.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="intel-grid">
+                    <div className="intel-panel">
+                      <div className="section-title">Authentication</div>
+                      <div className="auth-mini-grid">
+                        {["spf", "dkim", "dmarc"].map((key) => (
+                          <div className={security.headers?.authentication?.[key] === "pass" ? "auth-mini pass" : "auth-mini"} key={key}>
+                            <span>{key.toUpperCase()}</span>
+                            <strong>{header?.headers?.authentication?.[key] || "fail_or_unknown"}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="intel-panel">
+                      <div className="section-title">HTML links</div>
+                      <p>{security.html_analysis?.link_count ?? 0} link(s) inspected</p>
+                      {security.html_analysis?.mismatches?.length ? (
+                        security.html_analysis.mismatches.map((item, index) => (
+                          <div className="mini-row" key={index}>
+                            <strong>Destination mismatch</strong>
+                            <span>{item.visible_host} → {item.destination_host}</span>
+                          </div>
+                        ))
+                      ) : <div className="muted">No visible-link mismatches detected.</div>}
+                    </div>
+
+                    <div className="intel-panel">
+                      <div className="section-title">Attachments</div>
+                      <p>{security.attachment_analysis?.count ?? 0} attachment(s) inspected</p>
+                      {security.attachment_analysis?.attachments?.length ? (
+                        security.attachment_analysis.attachments.map((item, index) => (
+                          <div className="mini-row" key={index}>
+                            <strong>{item.filename}</strong>
+                            <span>{item.content_type} · {(item.size_bytes / 1024).toFixed(1)} KB</span>
+                          </div>
+                        ))
+                      ) : <div className="muted">No attachments detected.</div>}
+                    </div>
+
+                    <div className="intel-panel">
+                      <div className="section-title">Domain intelligence</div>
+                      <p>{security.unified_threat?.domain_intelligence?.hostname || security.sender_domain || "Sender domain"}</p>
+                      {security.unified_threat?.domain_intelligence?.registration?.status === "available" ? (
+                        <div className="mini-row">
+                          <strong>RDAP</strong>
+                          <span>
+                            {security.unified_threat.domain_intelligence.registration.age_signal?.replaceAll("_", " ") || "available"}
+                            {security.unified_threat.domain_intelligence.registration.created
+                              ? ` · created ${new Date(security.unified_threat.domain_intelligence.registration.created).toLocaleDateString()}`
+                              : ""}
+                          </span>
+                        </div>
+                      ) : <div className="muted">Registration data unavailable.</div>}
+                    </div>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {view === "history" && (
+            <section className="page-section">
+              <section className="dashboard-header">
+                <div>
+                  <span className="eyebrow">PERSONAL DATA</span>
+                  <h1>Scan history</h1>
+                  <p>Review the predictions saved to your authenticated account.</p>
+                </div>
+                <button className="secondary-button" onClick={loadAnalytics}>Refresh</button>
+              </section>
+
+              {analytics && (
+                <>
+                  <div className="analytics-grid">
+                    <div><span>Total scans</span><strong>{analytics.total_scanned}</strong></div>
+                    <div><span>Spam detected</span><strong>{analytics.spam_detected}</strong></div>
+                    <div><span>Spam rate</span><strong>{analytics.spam_rate}%</strong></div>
+                    <div><span>High risk</span><strong>{analytics.high_risk}</strong></div>
+                  </div>
+
+                  <section className="card section-card">
+                    <div className="section-heading">
+                      <div>
+                        <div className="card-kicker">RECENT ACTIVITY</div>
+                        <h2>Latest scans</h2>
+                      </div>
+                      <span className="count-pill">{analytics.recent?.length || 0}</span>
+                    </div>
+                    {analytics.recent?.length ? (
+                      <div className="history-table">
+                        {analytics.recent.map((item, index) => (
+                          <div className="history-row" key={index}>
+                            <span>{new Date(item.timestamp).toLocaleString()}</span>
+                            <strong className={item.prediction}>{item.prediction === "spam" ? "SPAM" : "SAFE"}</strong>
+                            <span>{item.risk_level}</span>
+                            <span>{item.risk_score}/100</span>
+                            <p>{item.preview}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <div className="empty-state short"><h3>No scans yet</h3><p>Run your first message analysis from the Scanner.</p></div>}
+                  </section>
+                </>
+              )}
+            </section>
+          )}
+
+          {view === "models" && (
+            <section className="page-section">
+              <section className="dashboard-header">
+                <div>
+                  <span className="eyebrow">MODEL OBSERVABILITY</span>
+                  <h1>Model evaluation</h1>
+                  <p>Compare benchmark results and inspect classifier error metrics.</p>
+                </div>
+                <button className="secondary-button" onClick={() => Promise.all([loadComparison(), loadEvaluationReports()])}>Refresh</button>
+              </section>
+
+              <section className="card section-card">
+                <div className="section-heading">
+                  <div>
+                    <div className="card-kicker">BENCHMARK REPORTS</div>
+                    <h2>Evaluation runs</h2>
+                  </div>
+                </div>
+                <div className="model-list">
+                  {evaluationReports?.reports && Object.entries(evaluationReports.reports).map(([key, item]) => (
+                    <div className="model-card" key={key}>
+                      <div>
+                        <strong>{key.replaceAll("_", " ")}</strong>
+                        <span>{item.dataset || "Evaluation report"}</span>
+                      </div>
+                      <div className="model-metrics">
+                        <span>Accuracy <b>{formatPercent(item.accuracy)}</b></span>
+                        <span>F1 <b>{formatPercent(item.f1)}</b></span>
+                        <span>ROC-AUC <b>{formatPercent(item.roc_auc)}</b></span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {!evaluationReports?.reports && <div className="empty-state short"><h3>No reports loaded</h3><p>Refresh to read the evaluation artifacts packaged with the backend.</p></div>}
+              </section>
+
+              <section className="card section-card">
+                <div className="section-heading">
+                  <div>
+                    <div className="card-kicker">CLASSIFIER COMPARISON</div>
+                    <h2>Error analysis</h2>
+                  </div>
+                </div>
+                <div className="model-list">
+                  {comparison?.metrics?.map((item) => (
+                    <div className="model-card expanded" key={item.model}>
+                      <div>
+                        <strong>{item.model}</strong>
+                        <span>UCI SMS Spam Collection · test split</span>
+                      </div>
+                      <div className="model-metrics">
+                        <span>Precision <b>{formatPercent(item.precision)}</b></span>
+                        <span>Recall <b>{formatPercent(item.recall)}</b></span>
+                        <span>F1 <b>{formatPercent(item.f1)}</b></span>
+                        <span>FP rate <b>{formatPercent(item.false_positive_rate)}</b></span>
+                        <span>FN rate <b>{formatPercent(item.false_negative_rate)}</b></span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </section>
+          )}
+        </>
+      )}
+
+      <footer className="footer">
+        <span>MailGuard AI</span>
+        <span>Explainable NLP · phishing intelligence · secure scan history</span>
+        <span>v4.0</span>
+      </footer>
+    </main>
+  );
 }
