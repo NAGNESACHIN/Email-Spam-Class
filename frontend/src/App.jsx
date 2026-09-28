@@ -31,7 +31,10 @@ function riskClass(value) {
 }
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem("mailguard_authenticated") === "1" ? "session" : "");
+  const [token, setToken] = useState(() => {
+    localStorage.removeItem("mailguard_token");
+    return localStorage.getItem("mailguard_authenticated") === "1" ? "session" : "";
+  });
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
