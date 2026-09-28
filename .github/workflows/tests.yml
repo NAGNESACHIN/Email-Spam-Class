@@ -18,6 +18,8 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Compile backend
         run: python -m compileall backend
+      - name: Validate database migrations
+        run: DATABASE_URL=sqlite:///./ci-mailguard.db alembic upgrade head
       - name: Run tests
         run: python -m pytest -q
 
