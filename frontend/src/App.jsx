@@ -31,7 +31,7 @@ function riskClass(value) {
 }
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem("mailguard_token") || "");
+  const [token, setToken] = useState(localStorage.getItem("mailguard_authenticated") === "1" ? "session" : "");
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
@@ -81,12 +81,20 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function getCookieValue(name) {
+    const prefix=name+"=";
+    const part=document.cookie.split("; ").find((item) => item.startsWith(prefix));
+    return part ? decodeURIComponent(part.slice(prefix.length)) : "";
+  }
+
   async function request(path, body, method = "POST") {
+    const csrf=getCookieValue("mailguard_csrf");
     const response = await fetch(`${API_URL}${path}`, {
       method,
+      credentials: "include",
       headers: {
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
@@ -163,8 +171,8 @@ export default function App() {
         return;
       }
 
-      localStorage.setItem("mailguard_token", data.access_token);
-      setToken(data.access_token);
+      localStorage.setItem("mailguard_authenticated", "1");
+      setToken("session");
       setUser(data.user || null);
       setAuthPassword("");
       setShowPassword(false);
@@ -178,8 +186,13 @@ export default function App() {
     }
   }
 
-  function logout() {
-    localStorage.removeItem("mailguard_token");
+  async function logout() {
+    try {
+      await request("/auth/logout");
+    } catch {
+      // Clear local UI state even if the backend session is already expired.
+    }
+    localStorage.removeItem("mailguard_authenticated");
     setToken("");
     setUser(null);
     setAnalytics(null);
@@ -315,8 +328,8 @@ export default function App() {
       setNotice("");
       request("/auth/oauth/exchange", { code: oauthCode })
         .then((data) => {
-          localStorage.setItem("mailguard_token", data.access_token);
-          setToken(data.access_token);
+          localStorage.setItem("mailguard_authenticated", "1");
+          setToken("session");
           setUser(data.user || null);
           window.history.replaceState(null, "", window.location.pathname + "#details");
           setView("details");
@@ -591,7 +604,7 @@ export default function App() {
                   <div className="detail-list">
                     <div><span>Email</span><strong>{user?.email || "—"}</strong></div>
                     <div><span>User ID</span><strong>{user?.id || "—"}</strong></div>
-                    <div><span>Authentication</span><strong>JWT session</strong></div>
+                    <div><span>Authentication</span><strong>HttpOnly session cookie</strong></div>
                     <div><span>API status</span><strong>{backendStatus === "online" ? "Online" : backendStatus === "checking" ? "Checking…" : "Offline"}</strong></div>
                     <div><span>ML model</span><strong>{modelLoaded ? "Loaded" : "Unavailable"}</strong></div>
                   </div>
