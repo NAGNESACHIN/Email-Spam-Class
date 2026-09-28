@@ -110,12 +110,12 @@ def _clear_session_cookies(response):
 
 def _validate_csrf(request: Request):
     if ENVIRONMENT not in {"production","prod"}:
-        return
+        return True
     if request.method in {"GET","HEAD","OPTIONS"}:
-        return
+        return True
     path=request.url.path
     if path in {"/auth/register","/auth/login","/auth/oauth/exchange"}:
-        return
+        return True
     if request.cookies.get(SESSION_COOKIE_NAME):
         cookie_token=request.cookies.get("mailguard_csrf","")
         header_token=request.headers.get("X-CSRF-Token","")
