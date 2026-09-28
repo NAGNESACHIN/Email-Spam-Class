@@ -436,8 +436,8 @@ def _auth_rate_limit(request: Request, email: str):
         _auth_hits[key].append(now)
 
 @app.post("/auth/register")
-def register(request: AuthRequest, db=Depends(get_db)):
-    _auth_rate_limit(request, request.email)
+def register(request: AuthRequest, http_request: Request, db=Depends(get_db)):
+    _auth_rate_limit(http_request, request.email)
     email=request.email.strip().lower()
     if not valid_email(email): raise HTTPException(400,"Enter a valid email.")
     if len(request.password)<8: raise HTTPException(400,"Password must be at least 8 characters.")
@@ -446,8 +446,8 @@ def register(request: AuthRequest, db=Depends(get_db)):
     return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
 
 @app.post("/auth/login")
-def login(request: AuthRequest, db=Depends(get_db)):
-    _auth_rate_limit(request)
+def login(request: AuthRequest, http_request: Request, db=Depends(get_db)):
+    _auth_rate_limit(http_request, request.email)
     user=db.query(User).filter(User.email==request.email.strip().lower()).first()
     if not user or not verify_password(request.password,user.password_hash): raise HTTPException(401,"Invalid email or password.")
     if user.password_hash.startswith("pbkdf2$"):
