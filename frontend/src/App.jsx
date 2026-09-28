@@ -100,23 +100,28 @@ export default function App() {
     return data;
   }
 
-  async function checkBackend() {
-    setBackendStatus("checking");
+  async function checkBackend({ silent = false } = {}) {
+    if (!silent) setBackendStatus("checking");
     try {
       const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), 15000);
+      const timer = window.setTimeout(() => controller.abort(), 65000);
       const response = await fetch(`${API_URL}/health`, {
         method: "GET",
         signal: controller.signal,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: "no-store",
       });
       window.clearTimeout(timer);
       const data = await response.json();
-      setBackendStatus(response.ok && data?.status === "ok" ? "online" : "offline");
-      setModelLoaded(Boolean(data?.model_loaded));
-    } catch {
-      setBackendStatus("offline");
+      if (response.ok && data?.status === "ok") {
+        setBackendStatus("online");
+        setModelLoaded(Boolean(data?.model_loaded));
+      } else {
+        setBackendStatus("offline");
+        setModelLoaded(false);
+      }
+    } catch (err) {
       setModelLoaded(false);
+      setBackendStatus(err?.name === "AbortError" ? "waking" : "offline");
     }
   }
 
@@ -294,7 +299,7 @@ export default function App() {
       setView("scanner");
     }
     checkBackend();
-    const retry = window.setInterval(checkBackend, 20000);
+    const retry = window.setInterval(() => checkBackend({ silent: true }), 20000);
     return () => {
       window.removeEventListener("hashchange", onHashChange);
       window.clearInterval(retry);
@@ -322,7 +327,8 @@ export default function App() {
 
   const backendLabel = useMemo(() => {
     if (backendStatus === "online") return modelLoaded ? "API online · model loaded" : "API online · model unavailable";
-    if (backendStatus === "checking") return "Waking API…";
+    if (backendStatus === "checking") return "Checking API…";
+    if (backendStatus === "waking") return "Waking Render API…";
     return "API offline";
   }, [backendStatus, modelLoaded]);
 
@@ -338,7 +344,7 @@ export default function App() {
         </button>
 
         <div className="topbar-right">
-          <div className={`api-status ${backendStatus}`}>
+          <div className={`api-status ${backendStatus}`} title={`Backend: ${API_URL}`}>
             <span className="status-dot" />
             {backendLabel}
           </div>
