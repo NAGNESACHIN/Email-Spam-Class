@@ -437,7 +437,8 @@ export default function App() {
           </section>
         </section>
       ) : (
-        {view === "details" && (
+        <>
+          {view === "details" && (
             <section className="page-section">
               <section className="dashboard-header details-header">
                 <div>
