@@ -17,6 +17,28 @@ services:
         value: https://email-spam-class.vercel.app,https://frontend-two-alpha-51.vercel.app
       - key: CORS_ORIGIN_REGEX
         value: ^https://email-spam-class(?:-[a-z0-9]+-nagnesachins-projects)?\.vercel\.app$
+      - key: FRONTEND_URL
+        value: https://email-spam-class.vercel.app
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        value: https://mailguard-ai-api.onrender.com/auth/google/callback
+      - key: YAHOO_CLIENT_ID
+        sync: false
+      - key: YAHOO_CLIENT_SECRET
+        sync: false
+      - key: YAHOO_REDIRECT_URI
+        value: https://mailguard-ai-api.onrender.com/auth/yahoo/callback
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_TENANT
+        value: common
+      - key: MICROSOFT_REDIRECT_URI
+        value: https://mailguard-ai-api.onrender.com/auth/microsoft/callback
       - key: VIRUSTOTAL_API_KEY
         sync: false
       - key: RDAP_LOOKUP_ENABLED
