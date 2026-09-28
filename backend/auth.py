@@ -23,8 +23,9 @@ else:
 engine=create_engine(DATABASE_URL,**engine_kwargs)
 SessionLocal=sessionmaker(bind=engine,autoflush=False,autocommit=False)
 Base=declarative_base()
-SECRET_KEY=os.getenv("JWT_SECRET","change-this-in-production")
-if ENVIRONMENT in {"production","prod"} and (SECRET_KEY == "change-this-in-production" or len(SECRET_KEY) < 32):
+_DEFAULT_DEV_SECRET="mailguard-development-secret-do-not-use-in-production-9f4c7b2a"
+SECRET_KEY=os.getenv("JWT_SECRET",_DEFAULT_DEV_SECRET)
+if ENVIRONMENT in {"production","prod"} and (not os.getenv("JWT_SECRET") or len(SECRET_KEY) < 32):
     raise RuntimeError("JWT_SECRET must be set to a strong random value (32+ characters) in production.")
 
 class User(Base):
