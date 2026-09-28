@@ -41,6 +41,8 @@ services:
         value: https://mailguard-ai-api.onrender.com/auth/microsoft/callback
       - key: VIRUSTOTAL_API_KEY
         sync: false
+      - key: REDIS_URL
+        sync: false
       - key: RDAP_LOOKUP_ENABLED
         value: "true"
       - key: AUTH_RATE_WINDOW_SECONDS
