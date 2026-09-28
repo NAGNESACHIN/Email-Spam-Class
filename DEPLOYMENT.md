@@ -29,6 +29,8 @@ Set these secret values in Render:
 - `JWT_SECRET` = a unique random secret of at least 32 characters
 - `VIRUSTOTAL_API_KEY` = optional
 
+Authentication sessions are issued as HttpOnly, Secure, SameSite cookies in production. Do not expose JWT values to the frontend or store them in browser storage.
+
 The blueprint already sets:
 
 - `ENVIRONMENT=production`
@@ -110,21 +112,23 @@ The implementation uses the Microsoft identity platform authorization-code flow 
 Do not paste client secrets into GitHub, Vercel, frontend code, or chat.
 ## 5. CORS
 
-The backend must allow the exact production frontend origin:
-
-`https://frontend-two-alpha-51.vercel.app`
-
-If the Vercel production domain changes, update Render's `CORS_ORIGINS` value and redeploy/restart the backend.
+The blueprint allows the canonical Vercel production origin and a narrow preview-domain regex. Keep the trusted-origin configuration explicit; do not use `*` with credentials.
 
 For multiple trusted origins, provide a comma-separated list.
 
-## 6. Database initialization
+## 6. Database initialization and migrations
 
-MailGuard currently creates its SQLAlchemy tables at application startup. After the first successful PostgreSQL connection, verify registration/login and a prediction request.
+MailGuard bootstraps the current schema with SQLAlchemy metadata. Alembic is now included for reviewed schema evolution. For a fresh database, run `alembic upgrade head`. For the existing Neon database created by previous deployments, first run `alembic stamp 0001_baseline`, then `alembic upgrade head` to apply the hardening migration. Review the target database before applying foreign-key constraints.
 
-A migration framework such as Alembic should be added before making schema changes in a long-lived production environment.
+## 7. Performance and production notes
 
-## 7. Smoke-test checklist
+- Batch prediction writes are committed as one database transaction rather than once per message.
+- Analytics uses SQL aggregation and only fetches the latest 20 scans.
+- CSV imports accept quoted/multiline RFC-style fields and support common message column names.
+- Docker uses a separate model-builder stage so the runtime image does not contain the ML training toolchain.
+- Local model training is explicit with `python run.py --train`; normal API startup no longer retrains the model.
+
+## 8. Smoke-test checklist
 
 1. Open the Vercel frontend.
 2. Register a new account.
