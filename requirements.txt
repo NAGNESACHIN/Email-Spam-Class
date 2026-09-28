@@ -1,15 +1,13 @@
 fastapi
 uvicorn[standard]
 scikit-learn
-pandas
 numpy
 joblib
 python-multipart
 pydantic
 SQLAlchemy
+alembic
 PyJWT
 psycopg2-binary
 psycopg[binary]>=3.2,<4
-pytest>=8.0,<9.0
 argon2-cffi>=23.1,<26
-httpx>=0.27,<1
