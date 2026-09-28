@@ -8,6 +8,7 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
+      REDIS_URL: ${REDIS_URL:-}
     volumes:
       - mailguard_data:/app/data
     ports:
