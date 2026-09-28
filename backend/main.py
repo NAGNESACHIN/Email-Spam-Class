@@ -444,12 +444,18 @@ def analyze_attachments(msg):
         size=len(payload) if payload is not None else 0
         extension=filename.rsplit(".",1)[-1].lower() if "." in filename else ""
         signals=[]
+        lower_name=filename.lower()
         if extension in DANGEROUS_ATTACHMENT_EXTENSIONS:
             signals.append({"severity":"high","type":"executable_attachment","detail":"Attachment uses an executable or script-capable extension."})
         if extension in MACRO_ATTACHMENT_EXTENSIONS:
             signals.append({"severity":"high","type":"macro_attachment","detail":"Attachment can contain Office macros."})
         if extension in ARCHIVE_ATTACHMENT_EXTENSIONS:
             signals.append({"severity":"medium","type":"archive_attachment","detail":"Archive or disk-image attachment can conceal nested payloads."})
+        if re.search(r"\.(?:exe|scr|bat|cmd|com|js|jse|vbs|vbe|wsf|wsh|msi|jar|hta|ps1)\.(?:pdf|docx?|xlsx?|pptx?|txt|jpg|png)$",lower_name):
+            signals.append({"severity":"high","type":"double_extension","detail":"Filename contains a dangerous extension before a benign-looking extension."})
+        declared=(part.get_content_type() or "").lower()
+        if extension in DANGEROUS_ATTACHMENT_EXTENSIONS and declared in {"application/pdf","text/plain","image/jpeg","image/png","application/zip"}:
+            signals.append({"severity":"high","type":"attachment_type_mismatch","detail":"Attachment filename extension conflicts with its declared MIME type."})
         if size > 10*1024*1024:
             signals.append({"severity":"medium","type":"oversized_attachment","detail":"Attachment exceeds 10 MB."})
         flags=[item["detail"] for item in signals]
