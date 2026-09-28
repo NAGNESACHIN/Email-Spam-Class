@@ -51,18 +51,28 @@ class OAuthIdentity(Base):
     __tablename__="oauth_identities"
     id=Column(Integer,primary_key=True)
     provider=Column(String(32),nullable=False)
+    issuer=Column(String(512),nullable=True)
     subject=Column(String(255),nullable=False)
+    tenant_id=Column(String(128),nullable=True)
     email=Column(String(255),nullable=False,index=True)
     user_id=Column(Integer,ForeignKey("users.id",ondelete="CASCADE"),index=True,nullable=False)
     created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
-    __table_args__=(UniqueConstraint("provider","subject",name="uq_oauth_provider_subject"),)
+    __table_args__=(
+        UniqueConstraint("provider","subject",name="uq_oauth_provider_subject"),
+        Index("ix_oauth_identity_issuer_subject","provider","issuer","subject"),
+    )
 
 class OAuthState(Base):
     __tablename__="oauth_states"
     id=Column(Integer,primary_key=True)
     provider=Column(String(32),nullable=False,index=True)
     state_hash=Column(String(64),unique=True,index=True,nullable=False)
+    browser_binding_hash=Column(String(64),nullable=True)
+    code_challenge=Column(String(128),nullable=True)
+    nonce_hash=Column(String(64),nullable=True)
+    redirect_uri=Column(String(1024),nullable=True)
     expires_at=Column(DateTime,nullable=False)
+    consumed_at=Column(DateTime,nullable=True)
     created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
 
 class OAuthCode(Base):
