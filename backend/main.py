@@ -16,6 +16,7 @@ import urllib.request
 from urllib.error import HTTPError, URLError
 from fastapi.responses import JSONResponse, RedirectResponse
 import joblib
+import jwt
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -506,6 +507,12 @@ def _auth_rate_limit(request: Request, email: str):
 
 # --- OAuth / SSO ---------------------------------------------------------
 OAUTH_FRONTEND_URL=os.getenv("FRONTEND_URL","https://email-spam-class.vercel.app").rstrip("/")
+_OAUTH_TX_COOKIE="__Host-mailguard_oauth_tx" if ENVIRONMENT in {"production","prod"} else "mailguard_oauth_tx"
+_OAUTH_PKCE_COOKIE="__Host-mailguard_oauth_pkce" if ENVIRONMENT in {"production","prod"} else "mailguard_oauth_pkce"
+_OAUTH_NONCE_COOKIE=_OAUTH_TX_COOKIE+"_nonce"
+_OIDC_METADATA_CACHE={}
+_OIDC_JWKS_CACHE={}
+_OIDC_CACHE_TTL=3600
 
 def _oauth_config(provider):
     provider=provider.lower()
@@ -513,33 +520,40 @@ def _oauth_config(provider):
         "google":{
             "client_id":os.getenv("GOOGLE_CLIENT_ID","").strip(),
             "client_secret":os.getenv("GOOGLE_CLIENT_SECRET","").strip(),
-            "redirect_uri":os.getenv("GOOGLE_REDIRECT_URI","https://mailguard-ai-api.onrender.com/auth/google/callback").strip(),
-            "authorize":"https://accounts.google.com/o/oauth2/v2/auth",
-            "token":"https://oauth2.googleapis.com/token",
-            "userinfo":"https://openidconnect.googleapis.com/v1/userinfo",
+            "redirect_uri":os.getenv("GOOGLE_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/google/callback").strip(),
+            "discovery":"https://accounts.google.com/.well-known/openid-configuration",
+            "expected_issuer":"https://accounts.google.com",
             "scope":"openid email profile",
+            "pkce":True,
         },
         "yahoo":{
             "client_id":os.getenv("YAHOO_CLIENT_ID","").strip(),
             "client_secret":os.getenv("YAHOO_CLIENT_SECRET","").strip(),
-            "redirect_uri":os.getenv("YAHOO_REDIRECT_URI","https://mailguard-ai-api.onrender.com/auth/yahoo/callback").strip(),
-            "authorize":"https://api.login.yahoo.com/oauth2/request_auth",
-            "token":"https://api.login.yahoo.com/oauth2/get_token",
-            "userinfo":"https://api.login.yahoo.com/openid/v1/userinfo",
+            "redirect_uri":os.getenv("YAHOO_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/yahoo/callback").strip(),
+            "discovery":"https://api.login.yahoo.com/.well-known/openid-configuration",
+            "expected_issuer":"https://api.login.yahoo.com",
             "scope":"openid email profile",
+            "pkce":False,
         },
         "microsoft":{
             "client_id":os.getenv("MICROSOFT_CLIENT_ID","").strip(),
             "client_secret":os.getenv("MICROSOFT_CLIENT_SECRET","").strip(),
             "tenant":os.getenv("MICROSOFT_TENANT","common").strip() or "common",
-            "redirect_uri":os.getenv("MICROSOFT_REDIRECT_URI","https://mailguard-ai-api.onrender.com/auth/microsoft/callback").strip(),
-            "authorize":None,
-            "token":None,
-            "userinfo":"https://graph.microsoft.com/oidc/userinfo",
+            "redirect_uri":os.getenv("MICROSOFT_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/microsoft/callback").strip(),
+            "discovery":None,
+            "expected_issuer":None,
             "scope":"openid profile email",
-        }
+            "pkce":True,
+        },
     }
-    return configs.get(provider)
+    cfg=configs.get(provider)
+    if cfg and provider=="microsoft":
+        cfg=dict(cfg)
+        tenant=quote(cfg["tenant"],safe="-.")
+        cfg["discovery"]=f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration"
+        if cfg["tenant"] not in {"common","organizations","consumers"}:
+            cfg["expected_issuer"]=f"https://login.microsoftonline.com/{cfg['tenant']}/v2.0"
+    return cfg
 
 def _sha256(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -551,163 +565,421 @@ def _oauth_enabled(provider):
     cfg=_oauth_config(provider)
     return bool(cfg and cfg.get("client_id") and cfg.get("client_secret"))
 
-def _oauth_redirect_error(provider, message):
-    params=urlencode({"oauth_error":message,"provider":provider})
-    return RedirectResponse(f"{OAUTH_FRONTEND_URL}?{params}", status_code=302)
+def _oauth_redirect_error(provider,message):
+    safe_messages={
+        "provider_not_configured","provider_denied","missing_oauth_response",
+        "invalid_or_expired_state","invalid_oauth_transaction",
+        "provider_authentication_failed","provider_did_not_return_a_valid_email",
+        "provider_email_is_not_verified","linked_account_not_found",
+        "account_already_exists","identity_issuer_mismatch","unsupported_id_token",
+    }
+    safe=message if message in safe_messages else "provider_authentication_failed"
+    response=RedirectResponse(
+        f"{OAUTH_FRONTEND_URL}?"+urlencode({"oauth_error":safe,"provider":provider}),
+        status_code=303
+    )
+    response.headers["Cache-Control"]="no-store"
+    return response
 
-def _oauth_userinfo(provider, access_token, cfg):
+def _oauth_clear_transaction_cookies(response):
+    secure=ENVIRONMENT in {"production","prod"}
+    for name in (_OAUTH_TX_COOKIE,_OAUTH_PKCE_COOKIE,_OAUTH_NONCE_COOKIE):
+        response.set_cookie(name,"",max_age=0,expires=0,httponly=True,
+                            secure=secure,samesite="lax",path="/")
+
+def _oauth_set_transaction_cookies(response,tx,verifier,nonce):
+    secure=ENVIRONMENT in {"production","prod"}
+    for name,value in (
+        (_OAUTH_TX_COOKIE,tx),
+        (_OAUTH_PKCE_COOKIE,verifier),
+        (_OAUTH_NONCE_COOKIE,nonce),
+    ):
+        response.set_cookie(name,value,max_age=10*60,httponly=True,
+                            secure=secure,samesite="lax",path="/")
+
+def _pkce_pair():
+    verifier=base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("ascii")
+    challenge=base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    return verifier,challenge
+
+def _oauth_json(url,timeout=8):
+    parsed=urlparse(url)
+    if parsed.scheme!="https" or not parsed.netloc:
+        raise ValueError("Only HTTPS OIDC endpoints are allowed.")
     request=urllib.request.Request(
-        cfg["userinfo"],
-        headers={"Authorization":f"Bearer {access_token}","Accept":"application/json"},
+        url,
+        headers={"Accept":"application/json","User-Agent":"MailGuard-AI/5.0"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request,timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def _oidc_metadata(provider,cfg,force=False):
+    cached=_OIDC_METADATA_CACHE.get(provider)
+    if cached and not force and time.monotonic()-cached["at"] < _OIDC_CACHE_TTL:
+        return cached["data"]
+    metadata=_oauth_json(cfg["discovery"])
+    required=("issuer","authorization_endpoint","token_endpoint","jwks_uri")
+    if any(not metadata.get(key) for key in required):
+        raise ValueError("OIDC provider metadata is incomplete.")
+    for key in ("issuer","authorization_endpoint","token_endpoint","jwks_uri"):
+        parsed=urlparse(str(metadata[key]))
+        if parsed.scheme!="https" or not parsed.netloc:
+            raise ValueError("OIDC metadata contains an insecure endpoint.")
+    if provider in {"google","yahoo"} and metadata["issuer"]!=cfg["expected_issuer"]:
+        raise ValueError("OIDC issuer metadata mismatch.")
+    if provider=="microsoft" and cfg.get("expected_issuer") and metadata["issuer"]!=cfg["expected_issuer"]:
+        raise ValueError("Microsoft issuer metadata mismatch.")
+    _OIDC_METADATA_CACHE[provider]={"at":time.monotonic(),"data":metadata}
+    return metadata
+
+def _oidc_jwks(provider,metadata,force=False):
+    cached=_OIDC_JWKS_CACHE.get(provider)
+    if cached and not force and time.monotonic()-cached["at"] < _OIDC_CACHE_TTL:
+        return cached["data"]
+    jwks=_oauth_json(metadata["jwks_uri"])
+    if not isinstance(jwks.get("keys"),list):
+        raise ValueError("OIDC JWKS response is invalid.")
+    _OIDC_JWKS_CACHE[provider]={"at":time.monotonic(),"data":jwks}
+    return jwks
+
+def _oidc_signing_key(provider,metadata,kid):
+    jwks=_oidc_jwks(provider,metadata)
+    key=next((item for item in jwks["keys"] if item.get("kid")==kid),None)
+    if key is None:
+        jwks=_oidc_jwks(provider,metadata,force=True)
+        key=next((item for item in jwks["keys"] if item.get("kid")==kid),None)
+    if not key or key.get("kty")!="RSA":
+        raise ValueError("OIDC signing key is unavailable.")
+    return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+
+def _expected_microsoft_issuer(claims,cfg,metadata):
+    tid=str(claims.get("tid") or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,64}",tid):
+        raise ValueError("Microsoft token has an invalid tid.")
+    if cfg.get("expected_issuer"):
+        expected=cfg["expected_issuer"]
+    else:
+        expected=f"https://login.microsoftonline.com/{tid}/v2.0"
+    if not str(expected).startswith("https://login.microsoftonline.com/"):
+        raise ValueError("Invalid Microsoft issuer.")
+    return expected
+
+def _validate_id_token(provider,id_token,cfg,metadata,expected_nonce):
+    if not id_token or not isinstance(id_token,str):
+        raise ValueError("Provider did not return an ID token.")
+    try:
+        header=jwt.get_unverified_header(id_token)
+    except Exception as exc:
+        raise ValueError("Invalid ID token header.") from exc
+    if header.get("alg")!="RS256" or not header.get("kid"):
+        raise ValueError("Unsupported ID token signing algorithm.")
+    key=_oidc_signing_key(provider,metadata,header["kid"])
+    try:
+        preliminary=jwt.decode(
+            id_token,key,algorithms=["RS256"],
+            options={
+                "verify_aud":False,
+                "verify_iss":False,
+                "require":["exp","iat","iss","sub","aud"],
+            },
+            leeway=60,
+        )
+        expected_issuer=(
+            _expected_microsoft_issuer(preliminary,cfg,metadata)
+            if provider=="microsoft"
+            else cfg["expected_issuer"]
+        )
+        claims=jwt.decode(
+            id_token,key,algorithms=["RS256"],
+            audience=cfg["client_id"],
+            issuer=expected_issuer,
+            leeway=60,
+            options={"require":["exp","iat","iss","sub","aud"]}
+        )
+    except jwt.PyJWTError as exc:
+        raise ValueError("ID token validation failed.") from exc
+    except Exception as exc:
+        raise ValueError("ID token validation failed.") from exc
+
+    aud=claims.get("aud")
+    aud_list=aud if isinstance(aud,list) else [aud]
+    if cfg["client_id"] not in aud_list:
+        raise ValueError("ID token audience mismatch.")
+    if claims.get("azp") is not None and claims.get("azp")!=cfg["client_id"]:
+        raise ValueError("ID token authorized-party mismatch.")
+    nonce=str(claims.get("nonce") or "")
+    if not nonce or not expected_nonce or not secrets.compare_digest(nonce,expected_nonce):
+        raise ValueError("ID token nonce mismatch.")
+    try:
+        iat=float(claims["iat"])
+    except (TypeError,ValueError):
+        raise ValueError("ID token issued-at timestamp is invalid.")
+    if iat > datetime.now(timezone.utc).timestamp()+60:
+        raise ValueError("ID token issued-at timestamp is in the future.")
+    return claims
+
+def _oauth_userinfo(access_token,metadata):
+    endpoint=metadata.get("userinfo_endpoint")
+    if not endpoint:
+        return {}
+    request=urllib.request.Request(
+        endpoint,
+        headers={
+            "Authorization":f"Bearer {access_token}",
+            "Accept":"application/json",
+            "User-Agent":"MailGuard-AI/5.0",
+        },
         method="GET"
     )
     with urllib.request.urlopen(request,timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
+        payload=json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload,dict) else {}
 
-def _oauth_token_exchange(provider, code, cfg):
-    if provider=="microsoft":
-        cfg=dict(cfg)
-        cfg["authorize"]=f"https://login.microsoftonline.com/{cfg['tenant']}/oauth2/v2.0/authorize"
-        cfg["token"]=f"https://login.microsoftonline.com/{cfg['tenant']}/oauth2/v2.0/token"
-    payload=urlencode({
+def _oauth_token_exchange(code,cfg,metadata,code_verifier=None):
+    payload={
         "code":code,
         "client_id":cfg["client_id"],
         "client_secret":cfg["client_secret"],
         "redirect_uri":cfg["redirect_uri"],
         "grant_type":"authorization_code",
-    }).encode("utf-8")
+    }
+    if cfg.get("pkce"):
+        if not code_verifier:
+            raise ValueError("PKCE verifier missing.")
+        payload["code_verifier"]=code_verifier
     request=urllib.request.Request(
-        cfg["token"],data=payload,
-        headers={"Content-Type":"application/x-www-form-urlencoded","Accept":"application/json"},
+        metadata["token_endpoint"],
+        data=urlencode(payload).encode("utf-8"),
+        headers={
+            "Content-Type":"application/x-www-form-urlencoded",
+            "Accept":"application/json",
+            "User-Agent":"MailGuard-AI/5.0",
+        },
         method="POST"
     )
     with urllib.request.urlopen(request,timeout=10) as response:
         data=json.loads(response.read().decode("utf-8"))
-    access_token=data.get("access_token")
-    if not access_token:
-        raise ValueError("OAuth provider did not return an access token.")
+    if not isinstance(data,dict) or not data.get("access_token") or not data.get("id_token"):
+        raise ValueError("Provider did not return the required tokens.")
     return data
 
-def _oauth_start(provider, db):
+def _oauth_error_response(provider,message):
+    response=_oauth_redirect_error(provider,message)
+    _oauth_clear_transaction_cookies(response)
+    return response
+
+def _oauth_start(provider,db):
     provider=provider.lower()
     cfg=_oauth_config(provider)
     if not cfg:
         raise HTTPException(404,"Unsupported sign-in provider.")
     if not _oauth_enabled(provider):
         return _oauth_redirect_error(provider,"provider_not_configured")
-    if provider=="microsoft":
-        cfg=dict(cfg)
-        cfg["authorize"]=f"https://login.microsoftonline.com/{cfg['tenant']}/oauth2/v2.0/authorize"
+    try:
+        metadata=_oidc_metadata(provider,cfg)
+    except Exception:
+        return _oauth_redirect_error(provider,"provider_authentication_failed")
+
     state=secrets.token_urlsafe(32)
+    tx=secrets.token_urlsafe(32)
+    nonce=secrets.token_urlsafe(32)
+    verifier,challenge=_pkce_pair()
     state_row=OAuthState(
         provider=provider,
         state_hash=_sha256(state),
-        expires_at=_oauth_now()+_oauth_now()+timedelta(minutes=10),
+        browser_binding_hash=_sha256(tx),
+        code_challenge=challenge,
+        nonce_hash=_sha256(nonce),
+        redirect_uri=cfg["redirect_uri"],
+        expires_at=_oauth_now()+timedelta(minutes=10),
     )
     db.add(state_row)
     db.commit()
+
     params={
         "client_id":cfg["client_id"],
         "redirect_uri":cfg["redirect_uri"],
         "response_type":"code",
         "scope":cfg["scope"],
         "state":state,
+        "nonce":nonce,
     }
+    if cfg.get("pkce"):
+        params["code_challenge"]=challenge
+        params["code_challenge_method"]="S256"
     if provider=="google":
         params["access_type"]="online"
         params["prompt"]="select_account"
-    if provider=="yahoo":
-        params["nonce"]=secrets.token_urlsafe(24)
     if provider=="microsoft":
         params["response_mode"]="query"
         params["prompt"]="select_account"
-    return RedirectResponse(cfg["authorize"]+"?"+urlencode(params),status_code=302)
 
-def _oauth_complete(provider, code, state, db):
+    response=RedirectResponse(metadata["authorization_endpoint"]+"?"+urlencode(params),status_code=302)
+    _oauth_set_transaction_cookies(response,tx,verifier,nonce)
+    response.headers["Cache-Control"]="no-store"
+    return response
+
+def _oauth_consume_state(provider,state,request,db):
+    state=state.strip()
+    if not state or len(state)>512:
+        return None,"invalid_oauth_transaction"
+    row=db.query(OAuthState).filter(
+        OAuthState.provider==provider,
+        OAuthState.state_hash==_sha256(state),
+        OAuthState.consumed_at==None,
+    ).first()
+    if not row or row.expires_at < _oauth_now():
+        if row:
+            row.consumed_at=_oauth_now()
+            db.commit()
+        return None,"invalid_or_expired_state"
+
+    tx=request.cookies.get(_OAUTH_TX_COOKIE,"")
+    verifier=request.cookies.get(_OAUTH_PKCE_COOKIE,"")
+    if not tx or not verifier or not row.browser_binding_hash:
+        return None,"invalid_oauth_transaction"
+    if not secrets.compare_digest(_sha256(tx),row.browser_binding_hash):
+        return None,"invalid_oauth_transaction"
+
+    cfg=_oauth_config(provider)
+    if not cfg or row.redirect_uri != cfg["redirect_uri"]:
+        return None,"invalid_oauth_transaction"
+    if cfg.get("pkce"):
+        _,challenge=_pkce_pair_from_verifier(verifier)
+        if not row.code_challenge or not secrets.compare_digest(challenge,row.code_challenge):
+            return None,"invalid_oauth_transaction"
+
+    nonce=request.cookies.get(_OAUTH_NONCE_COOKIE,"")
+    if not nonce or not row.nonce_hash or not secrets.compare_digest(_sha256(nonce),row.nonce_hash):
+        return None,"invalid_oauth_transaction"
+
+    row.consumed_at=_oauth_now()
+    db.commit()
+    return {"row":row,"verifier":verifier,"nonce":nonce},""
+
+def _pkce_pair_from_verifier(verifier):
+    return verifier,base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+
+def _oauth_complete(provider,code,state,request,db):
     cfg=_oauth_config(provider)
     if not cfg or not _oauth_enabled(provider):
         return _oauth_redirect_error(provider,"provider_not_configured")
-    state_row=db.query(OAuthState).filter(
-        OAuthState.provider==provider,
-        OAuthState.state_hash==_sha256(state)
-    ).first()
-    if not state_row or state_row.expires_at < _oauth_now():
-        if state_row:
-            db.delete(state_row); db.commit()
-        return _oauth_redirect_error(provider,"invalid_or_expired_state")
-    db.delete(state_row)
-    db.commit()
-
     try:
-        token_data=_oauth_token_exchange(provider,code,cfg)
-        info=_oauth_userinfo(provider,token_data["access_token"],cfg)
-    except (HTTPError,URLError,ValueError,json.JSONDecodeError):
-        return _oauth_redirect_error(provider,"provider_authentication_failed")
+        metadata=_oidc_metadata(provider,cfg)
+        transaction,error=_oauth_consume_state(provider,state,request,db)
+        if error:
+            return _oauth_error_response(provider,error)
 
-    email=str(info.get("email") or info.get("preferred_username") or "").strip().lower()
-    subject=str(info.get("sub") or "").strip()
-    if not email or not subject or not valid_email(email):
-        return _oauth_redirect_error(provider,"provider_did_not_return_a_valid_email")
-    if provider in {"google","yahoo"} and info.get("email_verified") is not True:
-        return _oauth_redirect_error(provider,"provider_email_is_not_verified")
+        if request.query_params.get("error"):
+            return _oauth_error_response(provider,"provider_denied")
+        if not code:
+            return _oauth_error_response(provider,"missing_oauth_response")
 
-    identity=db.query(OAuthIdentity).filter(
-        OAuthIdentity.provider==provider,
-        OAuthIdentity.subject==subject
-    ).first()
+        row=transaction["row"]
+        verifier=transaction["verifier"]
+        nonce=transaction["nonce"]
+        token_data=_oauth_token_exchange(code,cfg,metadata,verifier)
+        claims=_validate_id_token(provider,token_data["id_token"],cfg,metadata,nonce)
 
-    if identity:
-        user=db.get(User,identity.user_id)
-        if not user:
-            return _oauth_redirect_error(provider,"linked_account_not_found")
-    else:
-        user=db.query(User).filter(User.email==email).first()
-        if not user:
+        userinfo={}
+        try:
+            userinfo=_oauth_userinfo(token_data["access_token"],metadata)
+        except (HTTPError,URLError,ValueError,json.JSONDecodeError):
+            userinfo={}
+
+        id_subject=str(claims.get("sub") or "").strip()
+        info_subject=str(userinfo.get("sub") or "").strip()
+        if info_subject and info_subject != id_subject:
+            return _oauth_error_response(provider,"provider_authentication_failed")
+
+        email=str(
+            claims.get("email")
+            or claims.get("preferred_username")
+            or userinfo.get("email")
+            or userinfo.get("preferred_username")
+            or ""
+        ).strip().lower()
+
+        verified_values=[claims.get("email_verified"),userinfo.get("email_verified")]
+        verified=any(value is True or str(value).lower()=="true" for value in verified_values)
+        if provider in {"google","yahoo"} and not verified:
+            return _oauth_error_response(provider,"provider_email_is_not_verified")
+        if not email or not id_subject or not valid_email(email):
+            return _oauth_error_response(provider,"provider_did_not_return_a_valid_email")
+
+        issuer=str(claims.get("iss") or "").strip()
+        tenant_id=str(claims.get("tid") or "").strip() or None
+        identity=db.query(OAuthIdentity).filter(
+            OAuthIdentity.provider==provider,
+            OAuthIdentity.issuer==issuer,
+            OAuthIdentity.subject==id_subject,
+        ).first()
+
+        if not identity:
+            legacy=db.query(OAuthIdentity).filter(
+                OAuthIdentity.provider==provider,
+                OAuthIdentity.subject==id_subject,
+            ).first()
+            if legacy:
+                if legacy.issuer not in (None,"",issuer):
+                    return _oauth_error_response(provider,"identity_issuer_mismatch")
+                legacy.issuer=issuer
+                legacy.tenant_id=tenant_id
+                legacy.email=email
+                identity=legacy
+                db.commit()
+
+        if identity:
+            user=db.get(User,identity.user_id)
+            if not user:
+                return _oauth_error_response(provider,"linked_account_not_found")
+            identity.email=email
+            identity.issuer=issuer
+            identity.tenant_id=tenant_id
+            db.commit()
+        else:
+            user=db.query(User).filter(User.email==email).first()
+            if user:
+                return _oauth_error_response(provider,"account_already_exists")
             user=User(email=email,password_hash=hash_password(secrets.token_urlsafe(32)))
-            db.add(user); db.commit(); db.refresh(user)
-        identity=OAuthIdentity(provider=provider,subject=subject,email=email,user_id=user.id)
-        db.add(identity); db.commit()
+            db.add(user)
+            db.flush()
+            identity=OAuthIdentity(
+                provider=provider,
+                issuer=issuer,
+                subject=id_subject,
+                tenant_id=tenant_id,
+                email=email,
+                user_id=user.id,
+            )
+            db.add(identity)
+            db.commit()
 
-    one_time=secrets.token_urlsafe(32)
-    db.add(OAuthCode(
-        code_hash=_sha256(one_time),
-        user_id=user.id,
-        expires_at=_oauth_now()+timedelta(minutes=2),
-    ))
-    db.commit()
-    params=urlencode({"oauth_code":one_time,"provider":provider})
-    return RedirectResponse(f"{OAUTH_FRONTEND_URL}?{params}",status_code=302)
+        response=RedirectResponse(f"{OAUTH_FRONTEND_URL}#details",status_code=303)
+        _set_session_cookies(response,make_token(user))
+        _oauth_clear_transaction_cookies(response)
+        return response
+    except (HTTPError,URLError,ValueError,json.JSONDecodeError,jwt.PyJWTError):
+        return _oauth_error_response(provider,"provider_authentication_failed")
 
 @app.get("/auth/{provider}/start")
-def oauth_start(provider: str, db=Depends(get_db)):
+def oauth_start(provider: str,db=Depends(get_db)):
     return _oauth_start(provider,db)
 
 @app.get("/auth/{provider}/callback")
-def oauth_callback(provider: str, request: Request, db=Depends(get_db)):
+def oauth_callback(provider: str,request: Request,db=Depends(get_db)):
     provider=provider.lower()
-    error=request.query_params.get("error")
-    if error:
-        return _oauth_redirect_error(provider,error)
-    code=request.query_params.get("code","")
+    if provider not in {"google","yahoo","microsoft"}:
+        raise HTTPException(404,"Unsupported sign-in provider.")
     state=request.query_params.get("state","")
-    if not code or not state:
-        return _oauth_redirect_error(provider,"missing_oauth_response")
-    return _oauth_complete(provider,code,state,db)
-
-class OAuthExchangeRequest(BaseModel):
-    code: str = Field(..., min_length=20, max_length=256)
-
-@app.post("/auth/oauth/exchange")
-def oauth_exchange(request: OAuthExchangeRequest, db=Depends(get_db)):
-    row=db.query(OAuthCode).filter(OAuthCode.code_hash==_sha256(request.code),OAuthCode.consumed_at==None).first()
-    if not row or row.expires_at < _oauth_now():
-        raise HTTPException(401,"OAuth session is invalid or expired.")
-    row.consumed_at=_oauth_now()
-    db.commit()
-    user=db.get(User,row.user_id)
-    if not user:
-        raise HTTPException(401,"Account not found.")
-    return {"access_token":make_token(user),"token_type":"bearer","user":{"id":user.id,"email":user.email}}
+    if not state:
+        return _oauth_error_response(provider,"invalid_or_expired_state")
+    return _oauth_complete(provider,request.query_params.get("code",""),state,request,db)
 
 @app.post("/auth/register")
 def register(request: AuthRequest, http_request: Request, db=Depends(get_db)):
