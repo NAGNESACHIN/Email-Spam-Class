@@ -103,8 +103,16 @@ export default function App() {
   async function checkBackend() {
     setBackendStatus("checking");
     try {
-      const data = await request("/health", undefined, "GET");
-      setBackendStatus(data?.status === "ok" ? "online" : "offline");
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 15000);
+      const response = await fetch(`${API_URL}/health`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      window.clearTimeout(timer);
+      const data = await response.json();
+      setBackendStatus(response.ok && data?.status === "ok" ? "online" : "offline");
       setModelLoaded(Boolean(data?.model_loaded));
     } catch {
       setBackendStatus("offline");
@@ -162,7 +170,9 @@ export default function App() {
     setBatch([]);
     setNotice("");
     setAuthMode("login");
-    navigate("details");
+    window.history.replaceState(null, "", window.location.pathname);
+    setView("scanner");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function analyze() {
@@ -274,10 +284,22 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => setView(viewFromHash());
     window.addEventListener("hashchange", onHashChange);
-    if (!window.location.hash) window.location.hash = token ? "details" : "scanner";
+    if (token) {
+      if (!window.location.hash || !["details", "scanner", "history", "mail-settings", "models"].includes(window.location.hash.slice(1))) {
+        window.location.hash = "details";
+      }
+      setView(viewFromHash());
+    } else {
+      window.history.replaceState(null, "", window.location.pathname);
+      setView("scanner");
+    }
     checkBackend();
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+    const retry = window.setInterval(checkBackend, 20000);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.clearInterval(retry);
+    };
+  }, [token]);
 
   useEffect(() => {
     if (token && !user) loadProfile();
@@ -300,7 +322,7 @@ export default function App() {
 
   const backendLabel = useMemo(() => {
     if (backendStatus === "online") return modelLoaded ? "API online · model loaded" : "API online · model unavailable";
-    if (backendStatus === "checking") return "Checking API…";
+    if (backendStatus === "checking") return "Waking API…";
     return "API offline";
   }, [backendStatus, modelLoaded]);
 
