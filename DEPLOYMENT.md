@@ -32,7 +32,9 @@ Set these secret values in Render:
 The blueprint already sets:
 
 - `ENVIRONMENT=production`
-- `CORS_ORIGINS=https://frontend-two-alpha-51.vercel.app`
+- `FRONTEND_URL=https://email-spam-class.vercel.app`
+- explicit Vercel CORS configuration
+- optional Google, Yahoo, and Microsoft OAuth configuration
 - `RDAP_LOOKUP_ENABLED=true`
 - authentication throttling
 - PostgreSQL pool settings
@@ -54,15 +56,59 @@ Set the Vercel **Root Directory** to:
 
 `frontend`
 
-Set the production environment variable:
+Production uses the Vercel same-origin `/api` proxy defined in `frontend/vercel.json`, which routes API requests to the Render backend. No production `VITE_API_URL` value is required.
 
-`VITE_API_URL=https://<your-render-service>.onrender.com`
+After saving frontend settings, redeploy the frontend.
 
-Do not put the backend URL in source code.
+## 4. Google, Yahoo, and Microsoft SSO
 
-After saving environment variables, redeploy the frontend.
+The backend implements OAuth/OIDC authorization-code flows with server-side client secrets and a short-lived, one-time exchange code. Provider credentials must be stored only in Render.
 
-## 4. CORS
+### Google
+
+Create a Web application OAuth client in Google Cloud Console. Add this exact authorized redirect URI:
+
+`https://mailguard-ai-api.onrender.com/auth/google/callback`
+
+Set in Render:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI` = the callback URL above
+
+The application requests the `openid email profile` scopes and uses Google's userinfo endpoint after exchanging the authorization code. Google requires the redirect URI to exactly match a registered URI. citeturn185304search0
+
+### Yahoo
+
+Create an application in the Yahoo Developer Network and register this exact redirect URI:
+
+`https://mailguard-ai-api.onrender.com/auth/yahoo/callback`
+
+Set in Render:
+
+- `YAHOO_CLIENT_ID`
+- `YAHOO_CLIENT_SECRET`
+- `YAHOO_REDIRECT_URI` = the callback URL above
+
+The implementation uses Yahoo's authorization-code flow and UserInfo endpoint with OpenID Connect scopes. Yahoo documents the authorization endpoint at `https://api.login.yahoo.com/oauth2/request_auth`, the token endpoint at `https://api.login.yahoo.com/oauth2/get_token`, and the UserInfo endpoint at `https://api.login.yahoo.com/openid/v1/userinfo`. citeturn185304search3turn185304search1
+
+### Microsoft
+
+Create a Microsoft Entra app registration and add this exact Web redirect URI:
+
+`https://mailguard-ai-api.onrender.com/auth/microsoft/callback`
+
+Set in Render:
+
+- `MICROSOFT_CLIENT_ID`
+- `MICROSOFT_CLIENT_SECRET`
+- `MICROSOFT_TENANT=common`
+- `MICROSOFT_REDIRECT_URI` = the callback URL above
+
+The implementation uses the Microsoft identity platform authorization-code flow and the UserInfo endpoint. Microsoft documents `https://graph.microsoft.com/oidc/userinfo` as the UserInfo endpoint and supports the `common` tenant for multi-account sign-in scenarios. citeturn161741search0turn878762search2
+
+Do not paste client secrets into GitHub, Vercel, frontend code, or chat.
+## 5. CORS
 
 The backend must allow the exact production frontend origin:
 
@@ -72,13 +118,13 @@ If the Vercel production domain changes, update Render's `CORS_ORIGINS` value an
 
 For multiple trusted origins, provide a comma-separated list.
 
-## 5. Database initialization
+## 6. Database initialization
 
 MailGuard currently creates its SQLAlchemy tables at application startup. After the first successful PostgreSQL connection, verify registration/login and a prediction request.
 
 A migration framework such as Alembic should be added before making schema changes in a long-lived production environment.
 
-## 6. Smoke-test checklist
+## 7. Smoke-test checklist
 
 1. Open the Vercel frontend.
 2. Register a new account.
