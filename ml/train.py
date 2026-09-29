@@ -261,9 +261,32 @@ def evaluate_email_dataset(path=EMAIL_DATASET, group_column=None):
     print(json.dumps(report, indent=2))
     return report
 
-def main():
-    download_dataset()
-    df = load_data()
+def load_spamassassin_training_data():
+    """Load labeled raw emails from the Apache SpamAssassin public corpus."""
+    download_spamassassin_corpus()
+    rows = []
+    for source in ("easy_ham", "hard_ham", "spam"):
+        normalized = "spam" if source == "spam" else "ham"
+        source_dir = SPAMASSASSIN_DIR / source
+        for path in source_dir.rglob("*"):
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            try:
+                text = _extract_mail_text(path.read_bytes())
+                if text:
+                    rows.append({"label": normalized, "text": text, "source": source, "message_id": path.name})
+            except Exception:
+                continue
+
+    df = pd.DataFrame(rows).drop_duplicates(subset=["text"]).reset_index(drop=True)
+    if df.empty or df["label"].nunique() < 2:
+        raise ValueError("SpamAssassin corpus did not produce both ham and spam samples.")
+    return df
+
+
+def train_spamassassin():
+    """Train the production text classifier on real labeled email messages."""
+    df = load_spamassassin_training_data()
 
     X_train, X_test, y_train, y_test = train_test_split(
         df["text"], df["label"], test_size=0.20, random_state=42, stratify=df["label"]
@@ -309,18 +332,31 @@ def main():
         print(f"{name}: accuracy={metrics['accuracy']:.4f}, F1={metrics['f1']:.4f}, ROC-AUC={metrics['roc_auc']:.4f}")
 
     joblib.dump(models["Logistic Regression"], MODEL_DIR / "spam_classifier.joblib")
-    import json
+    dataset_report = {
+        "dataset": "Apache SpamAssassin Public Corpus (20030228)",
+        "dataset_type": "real labeled email messages",
+        "source": "https://spamassassin.apache.org/old/publiccorpus/",
+        "samples": int(len(df)),
+        "train_samples": int(len(X_train)),
+        "test_samples": int(len(X_test)),
+        "class_counts": {str(k): int(v) for k, v in df["label"].value_counts().items()},
+        "test_size": 0.20,
+        "random_state": 42,
+        "metrics": comparison,
+    }
     (MODEL_DIR / "comparison_metrics.json").write_text(
-        json.dumps({"dataset": "UCI SMS Spam Collection", "test_size": 0.20, "random_state": 42, "metrics": comparison}, indent=2)
+        json.dumps(dataset_report, indent=2)
     )
     print("\nPrimary model saved to models/spam_classifier.joblib")
-    print("Comparison metrics saved to models/comparison_metrics.json")
+    print("Training dataset: Apache SpamAssassin Public Corpus")
+    print("Metrics saved to models/comparison_metrics.json")
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--email-dataset", type=str, help="CSV with label,text for real-email evaluation")
+    parser.add_argument("--sms-benchmark", action="store_true", help="Train/evaluate the legacy UCI SMS benchmark instead of the real-email production corpus")
     parser.add_argument("--group-column", type=str, help="Optional email campaign/source column used for leakage-safe grouped evaluation")
     parser.add_argument("--spambase", action="store_true", help="Evaluate the UCI Spambase email benchmark")
     parser.add_argument("--spamassassin", action="store_true", help="Evaluate the Apache SpamAssassin raw-email corpus")
@@ -331,5 +367,7 @@ if __name__ == "__main__":
         evaluate_spambase()
     elif args.email_dataset:
         evaluate_email_dataset(args.email_dataset, args.group_column)
-    else:
+    elif args.sms_benchmark:
         main()
+    else:
+        train_spamassassin()
