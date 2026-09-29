@@ -524,22 +524,6 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className={authProvider === "Yahoo Mail" ? "provider-button active" : "provider-button"}
-                onClick={() => startOAuth("yahoo")}
-              >
-                <span className="provider-icon yahoo">Y!</span>
-                <span>Yahoo <small>Mail</small></span>
-              </button>
-              <button
-                type="button"
-                className={authProvider === "Microsoft" ? "provider-button active" : "provider-button"}
-                onClick={() => startOAuth("microsoft")}
-              >
-                <span className="provider-icon microsoft"><i></i><i></i><i></i><i></i></span>
-                <span>Microsoft <small>Outlook / 365</small></span>
-              </button>
-              <button
-                type="button"
                 className={authProvider === "email" ? "provider-button active" : "provider-button"}
                 onClick={() => { setAuthProvider("email"); setError(""); setNotice(""); }}
               >
