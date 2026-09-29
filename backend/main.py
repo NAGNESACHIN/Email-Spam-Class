@@ -516,44 +516,17 @@ _OIDC_CACHE_TTL=3600
 
 def _oauth_config(provider):
     provider=provider.lower()
-    configs={
-        "google":{
-            "client_id":os.getenv("GOOGLE_CLIENT_ID","").strip(),
-            "client_secret":os.getenv("GOOGLE_CLIENT_SECRET","").strip(),
-            "redirect_uri":os.getenv("GOOGLE_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/google/callback").strip(),
-            "discovery":"https://accounts.google.com/.well-known/openid-configuration",
-            "expected_issuer":"https://accounts.google.com",
-            "scope":"openid email profile",
-            "pkce":True,
-        },
-        "yahoo":{
-            "client_id":os.getenv("YAHOO_CLIENT_ID","").strip(),
-            "client_secret":os.getenv("YAHOO_CLIENT_SECRET","").strip(),
-            "redirect_uri":os.getenv("YAHOO_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/yahoo/callback").strip(),
-            "discovery":"https://api.login.yahoo.com/.well-known/openid-configuration",
-            "expected_issuer":"https://api.login.yahoo.com",
-            "scope":"openid email profile",
-            "pkce":False,
-        },
-        "microsoft":{
-            "client_id":os.getenv("MICROSOFT_CLIENT_ID","").strip(),
-            "client_secret":os.getenv("MICROSOFT_CLIENT_SECRET","").strip(),
-            "tenant":os.getenv("MICROSOFT_TENANT","common").strip() or "common",
-            "redirect_uri":os.getenv("MICROSOFT_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/microsoft/callback").strip(),
-            "discovery":None,
-            "expected_issuer":None,
-            "scope":"openid profile email",
-            "pkce":True,
-        },
-    }
-    cfg=configs.get(provider)
-    if cfg and provider=="microsoft":
-        cfg=dict(cfg)
-        tenant=quote(cfg["tenant"],safe="-.")
-        cfg["discovery"]=f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration"
-        if re.fullmatch(r"[0-9a-fA-F-]{36}",cfg["tenant"]):
-            cfg["expected_issuer"]=f"https://login.microsoftonline.com/{cfg['tenant']}/v2.0"
-    return cfg
+    if provider != "google":
+        return None
+    return {
+        "client_id":os.getenv("GOOGLE_CLIENT_ID","").strip(),
+        "client_secret":os.getenv("GOOGLE_CLIENT_SECRET","").strip(),
+        "redirect_uri":os.getenv("GOOGLE_REDIRECT_URI",f"{OAUTH_FRONTEND_URL}/api/auth/google/callback").strip(),
+        "discovery":"https://accounts.google.com/.well-known/openid-configuration",
+        "expected_issuer":"https://accounts.google.com",
+        "scope":"openid email profile",
+        "pkce":True,
+    }    return cfg
 
 def _sha256(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -628,7 +601,7 @@ def _oidc_metadata(provider,cfg,force=False):
         parsed=urlparse(str(metadata[key]))
         if parsed.scheme!="https" or not parsed.netloc:
             raise ValueError("OIDC metadata contains an insecure endpoint.")
-    if provider in {"google","yahoo"} and metadata["issuer"]!=cfg["expected_issuer"]:
+    if provider=="google" and metadata["issuer"]!=cfg["expected_issuer"]:
         raise ValueError("OIDC issuer metadata mismatch.")
     if provider=="microsoft" and cfg.get("expected_issuer") and metadata["issuer"]!=cfg["expected_issuer"]:
         raise ValueError("Microsoft issuer metadata mismatch.")
@@ -907,7 +880,7 @@ def _oauth_complete(provider,code,state,request,db):
 
         verified_values=[claims.get("email_verified"),userinfo.get("email_verified")]
         verified=any(value is True or str(value).lower()=="true" for value in verified_values)
-        if provider in {"google","yahoo"} and not verified:
+        if provider=="google" and not verified:
             return _oauth_error_response(provider,"provider_email_is_not_verified")
         if not email or not id_subject or not valid_email(email):
             return _oauth_error_response(provider,"provider_did_not_return_a_valid_email")
@@ -974,7 +947,7 @@ def oauth_start(provider: str,db=Depends(get_db)):
 @app.get("/auth/{provider}/callback")
 def oauth_callback(provider: str,request: Request,db=Depends(get_db)):
     provider=provider.lower()
-    if provider not in {"google","yahoo","microsoft"}:
+    if provider != "google":
         raise HTTPException(404,"Unsupported sign-in provider.")
     state=request.query_params.get("state","")
     if not state:
