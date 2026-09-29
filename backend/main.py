@@ -628,18 +628,6 @@ def _oidc_signing_key(provider,metadata,kid):
         raise ValueError("OIDC signing key is unavailable.")
     return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
 
-def _expected_microsoft_issuer(claims,cfg,metadata):
-    tid=str(claims.get("tid") or "").strip()
-    if not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",tid):
-        raise ValueError("Microsoft token has an invalid tid.")
-    if cfg.get("expected_issuer"):
-        expected=cfg["expected_issuer"]
-    else:
-        expected=f"https://login.microsoftonline.com/{tid}/v2.0"
-    if not str(expected).startswith("https://login.microsoftonline.com/"):
-        raise ValueError("Invalid Microsoft issuer.")
-    return expected
-
 def _validate_id_token(provider,id_token,cfg,metadata,expected_nonce):
     if not id_token or not isinstance(id_token,str):
         raise ValueError("Provider did not return an ID token.")
@@ -660,11 +648,7 @@ def _validate_id_token(provider,id_token,cfg,metadata,expected_nonce):
             },
             leeway=60,
         )
-        expected_issuer=(
-            _expected_microsoft_issuer(preliminary,cfg,metadata)
-            if provider=="microsoft"
-            else cfg["expected_issuer"]
-        )
+        expected_issuer=cfg["expected_issuer"]
         claims=jwt.decode(
             id_token,key,algorithms=["RS256"],
             audience=cfg["client_id"],
@@ -785,9 +769,6 @@ def _oauth_start(provider,db):
         params["code_challenge_method"]="S256"
     if provider=="google":
         params["access_type"]="online"
-        params["prompt"]="select_account"
-    if provider=="microsoft":
-        params["response_mode"]="query"
         params["prompt"]="select_account"
 
     response=RedirectResponse(metadata["authorization_endpoint"]+"?"+urlencode(params),status_code=302)
