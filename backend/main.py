@@ -906,22 +906,37 @@ def _oauth_complete(provider,code,state,request,db):
             identity.tenant_id=tenant_id
             db.commit()
         else:
+            # Google has already asserted a verified email address above. If a
+            # password account exists for that same verified address, link the
+            # Google identity to that existing account instead of rejecting the
+            # OAuth sign-in. This preserves the existing account and avoids
+            # creating duplicate users.
             user=db.query(User).filter(User.email==email).first()
             if user:
-                return _oauth_error_response(provider,"account_already_exists")
-            user=User(email=email,password_hash=hash_password(secrets.token_urlsafe(32)))
-            db.add(user)
-            db.flush()
-            identity=OAuthIdentity(
-                provider=provider,
-                issuer=issuer,
-                subject=id_subject,
-                tenant_id=tenant_id,
-                email=email,
-                user_id=user.id,
-            )
-            db.add(identity)
-            db.commit()
+                identity=OAuthIdentity(
+                    provider=provider,
+                    issuer=issuer,
+                    subject=id_subject,
+                    tenant_id=tenant_id,
+                    email=email,
+                    user_id=user.id,
+                )
+                db.add(identity)
+                db.commit()
+            else:
+                user=User(email=email,password_hash=hash_password(secrets.token_urlsafe(32)))
+                db.add(user)
+                db.flush()
+                identity=OAuthIdentity(
+                    provider=provider,
+                    issuer=issuer,
+                    subject=id_subject,
+                    tenant_id=tenant_id,
+                    email=email,
+                    user_id=user.id,
+                )
+                db.add(identity)
+                db.commit()
 
         # The OAuth callback is reached through the Vercel /api rewrite. Do not
         # rely on the callback response's session Set-Cookie surviving that proxy.
