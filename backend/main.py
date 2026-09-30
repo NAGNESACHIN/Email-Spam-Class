@@ -159,6 +159,9 @@ class AuthRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=8, max_length=256)
 
+class OAuthExchangeRequest(BaseModel):
+    code: str = Field(..., min_length=16, max_length=256)
+
 def extract_urls(text):
     return re.findall(r"https?://[^\s<>]+|www\.[^\s<>]+", text, re.I)
 
@@ -914,9 +917,23 @@ def _oauth_complete(provider,code,state,request,db):
             db.add(identity)
             db.commit()
 
-        response=RedirectResponse(f"{OAUTH_FRONTEND_URL}#details",status_code=303)
-        _set_session_cookies(response,make_token(user))
+        # The OAuth callback is reached through the Vercel /api rewrite. Do not
+        # rely on the callback response's session Set-Cookie surviving that proxy.
+        # Instead issue a short-lived, one-time exchange code that the frontend
+        # redeems on the same Vercel /api origin.
+        exchange_code=secrets.token_urlsafe(48)
+        db.add(OAuthCode(
+            code_hash=_sha256(exchange_code),
+            user_id=user.id,
+            expires_at=_oauth_now()+timedelta(minutes=2),
+        ))
+        db.commit()
+        response=RedirectResponse(
+            f"{OAUTH_FRONTEND_URL}?" + urlencode({"oauth_code":exchange_code}) + "#details",
+            status_code=303,
+        )
         _oauth_clear_transaction_cookies(response)
+        response.headers["Cache-Control"]="no-store"
         return response
     except (HTTPError,URLError,ValueError,json.JSONDecodeError,jwt.PyJWTError):
         return _oauth_error_response(provider,"provider_authentication_failed")
@@ -934,6 +951,34 @@ def oauth_callback(provider: str,request: Request,db=Depends(get_db)):
     if not state:
         return _oauth_error_response(provider,"invalid_or_expired_state")
     return _oauth_complete(provider,request.query_params.get("code",""),state,request,db)
+
+@app.post("/auth/oauth/exchange")
+def oauth_exchange(request: OAuthExchangeRequest, db=Depends(get_db)):
+    code=request.code.strip()
+    row=db.query(OAuthCode).filter(
+        OAuthCode.code_hash==_sha256(code),
+        OAuthCode.consumed_at==None,
+    ).with_for_update().first()
+    if not row or row.expires_at < _oauth_now():
+        if row:
+            row.consumed_at=_oauth_now()
+            db.commit()
+        raise HTTPException(400,"Invalid or expired OAuth exchange code.")
+
+    user=db.get(User,row.user_id)
+    if not user:
+        row.consumed_at=_oauth_now()
+        db.commit()
+        raise HTTPException(400,"Linked account not found.")
+
+    row.consumed_at=_oauth_now()
+    db.commit()
+    response=JSONResponse({
+        "authenticated":True,
+        "user":{"id":user.id,"email":user.email},
+    })
+    _set_session_cookies(response,make_token(user))
+    return response
 
 @app.post("/auth/register")
 def register(request: AuthRequest, http_request: Request, db=Depends(get_db)):
@@ -1237,4 +1282,3 @@ def analyze_email_security(headers, body):
             "lookalike_domains":lookalikes,"signals":signals,"risk_signal_count":len(signals),
             "high_signals":high,"medium_signals":medium,"threat_score":threat_score,
             "security_risk":"high" if threat_score>=70 else ("medium" if threat_score>=30 else "low")}
-
