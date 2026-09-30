@@ -364,6 +364,8 @@ export default function App() {
 
     const params = new URLSearchParams(window.location.search);
     const oauthError = params.get("oauth_error");
+    const oauthCode = params.get("oauth_code");
+
     if (oauthError) {
       const provider = params.get("provider") || "provider";
       const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
@@ -394,7 +396,25 @@ export default function App() {
       }
     }
 
-    restoreSession();
+    async function bootstrapSession() {
+      if (oauthCode && !oauthError) {
+        try {
+          await request("/auth/oauth/exchange", { code: oauthCode });
+          localStorage.setItem("mailguard_authenticated", "1");
+          window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+        } catch (err) {
+          localStorage.removeItem("mailguard_authenticated");
+          setToken("");
+          setUser(null);
+          setError(err?.message || "Unable to complete Google sign-in.");
+          window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+          return;
+        }
+      }
+      await restoreSession();
+    }
+
+    bootstrapSession();
     checkBackend();
     const retry = window.setInterval(() => checkBackend({ silent: true }), 20000);
     return () => {
