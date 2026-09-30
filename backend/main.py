@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
 import time
+import logging
 import base64
 import urllib.request
 from urllib.error import HTTPError, URLError
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
 MODEL_PATH = ROOT / "models" / "spam_classifier.joblib"
 app = FastAPI(title="MailGuard AI API", version="4.0.0")
+_oauth_logger = logging.getLogger("mailguard.oauth")
 _RATE_WINDOW_SECONDS=60
 _RATE_LIMIT=60
 _rate_hits=defaultdict(deque)
@@ -826,8 +828,10 @@ def _oauth_complete(provider,code,state,request,db):
     cfg=_oauth_config(provider)
     if not cfg or not _oauth_enabled(provider):
         return _oauth_redirect_error(provider,"provider_not_configured")
+    stage="metadata"
     try:
         metadata=_oidc_metadata(provider,cfg)
+        stage="state"
         transaction,error=_oauth_consume_state(provider,state,request,db)
         if error:
             return _oauth_error_response(provider,error)
@@ -840,7 +844,9 @@ def _oauth_complete(provider,code,state,request,db):
         row=transaction["row"]
         verifier=transaction["verifier"]
         nonce=transaction["nonce"]
+        stage="token_exchange"
         token_data=_oauth_token_exchange(code,cfg,metadata,verifier)
+        stage="id_token_validation"
         claims=_validate_id_token(provider,token_data["id_token"],cfg,metadata,nonce)
 
         userinfo={}
@@ -935,7 +941,12 @@ def _oauth_complete(provider,code,state,request,db):
         _oauth_clear_transaction_cookies(response)
         response.headers["Cache-Control"]="no-store"
         return response
-    except (HTTPError,URLError,ValueError,json.JSONDecodeError,jwt.PyJWTError):
+    except (HTTPError,URLError,ValueError,json.JSONDecodeError,jwt.PyJWTError) as exc:
+        status=getattr(exc,"code",None) if isinstance(exc,HTTPError) else None
+        _oauth_logger.warning(
+            "OAuth callback failed provider=%s stage=%s error_type=%s http_status=%s",
+            provider,stage,type(exc).__name__,status
+        )
         return _oauth_error_response(provider,"provider_authentication_failed")
 
 @app.get("/auth/{provider}/start")
