@@ -526,7 +526,7 @@ def _oauth_config(provider):
         "expected_issuer":"https://accounts.google.com",
         "scope":"openid email profile",
         "pkce":True,
-    }    return cfg
+    }
 
 def _sha256(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
